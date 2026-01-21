@@ -1,0 +1,802 @@
+---
+title: "Analysis of PCA from Technical Replicates from ADSP R5"
+author: "ERM"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# A. R5 Technical Replicate Data
+
+## A.1 Overview
+
+Technical replicates are samples from the same individual processed through independent library preparations and sequencing runs. This document analyzes PCA results from *technical replicates* in the ADSP R5 post-QC dataset to assess technical variation and sequencing quality.
+
+**What this analysis does:**
+
+1. **Data Loading**: Reads PCA eigenvectors/eigenvalues and covariate data
+2. **Quality Assessment**: Examines variance distribution via scree plots
+3. **Replicate Concordance**: Calculates within-group standard deviations across all PCs
+4. **Technical Issues**: Identifies replicate groups with unexpectedly high variation
+5. **Visualization**: Creates PC scatter plots colored by technical factors
+
+**Key expectations for technical replicates:**
+
+- **Near-zero variation** in early PCs (biological signal should be identical)
+- **Replicate split** occurs around PC (n_groups - 1) where noise dominates
+- **Technical factors** (PCR-free vs standard, sequencing round) may explain any observed variation
+
+## A.2 Replicate PCA Protocol
+
+We follow the same protocol as for non-technical replicates:
+
+[**Replicate PCA Protocol**]{.underline}
+
+A principal components analysis (PCA) was implemented using replicate samples identified through identity-by-descent analysis. Only replicate groups that include at least one sample from this sequencing round (r5) are included.
+
+-   Select variants (SNVs or INDELs) meeting all of the following criteria:
+
+    -   polymorphic among replicates
+
+    -   no genotype missingness across replicates
+
+    -   minor allele frequency (MAF)\>0.05
+
+    -   QC criteria from fields in \*.summary file: `GLNexusPass`=1 and `CallBad`=0 and `HiDepth`=0
+
+-   LD prune selected variants (r2 threshold of 0.8)
+
+-   Conduct PCA (EIGENSOFT/EIGENSTRAT) to obtain all eigenvectors (PCs) and eigenvalues
+
+## A.3 Data Description
+
+### A.3.1 File Parameters
+
+```{r file_parameters, message=FALSE, warning=FALSE, echo=FALSE, class.source="fold-hide"}
+# ============================================================================
+# FILE PATHS AND PARAMETERS - MODIFY AS NEEDED
+# ============================================================================
+
+# ---- INPUT FILES ----
+# PCA file format: CSV with first row containing eigenvalues in columns 4+
+#                  Subsequent rows contain: ID, Rep, index, PC1, PC2, ..., PCn
+pca_file <- "data/TECH_pruned_evec.csv"
+
+# Covariate file format: CSV with columns including:
+#   Required: SampleID, Cohort_Site, Study, Round, Sex, Race, Ethnicity
+#   Optional: DX_harmonized, Age_harmonized, APOE_reported, PCR.free, Technical_Replicate
+covariate_file <- "data/r5_replicate_covariates_TechReps.csv"
+
+# ---- OUTPUT FILES ----
+processed_pca_output <- "processed_tech_pca_data.csv"  # Cleaned PCA data with PC column names
+replicate_spreads_cache <- "tech_rep_spreads.rds"      # Cache of SD calculations (delete to recalculate)
+
+# ---- ANALYSIS PARAMETERS ----
+# PC Region Definitions - MODIFY THESE TO CHANGE ANALYSIS REGIONS
+early_pcs_range <- c(1, 5)           # Early PCs region (PC1-PC5)
+split_region_range <- c(6, 16)       # Replicate split region (PC6-PC16)
+late_pcs_range <- c(17, NA)          # Late PCs region (PC17-end, NA = to last PC)
+
+# Threshold for flagging high SD in early PCs (indicates technical issues)
+# For technical replicates, expect SDs < 1e-4 in early PCs
+sd_threshold_early_pcs <- 1e-4
+
+# Threshold for flagging high SD in replicate split region
+sd_threshold_split_region <- 0.1
+
+# Percentile cutoff for highlighting top spreads in plots (0.90 = top 10%)
+top_percentile_cutoff <- 0.90
+
+# Number of PCs to show in zoomed scree plot
+n_pcs_zoom <- 10
+
+# ============================================================================
+
+# Quick reference for threshold values:
+# - sd_threshold_early_pcs: Increase if too many false positives (e.g., 1e-3)
+# - sd_threshold_split_region: Decrease to be more stringent (e.g., 0.05)
+# ============================================================================
+
+# Validate input files exist
+if (!file.exists(pca_file)) {
+  stop("PCA file not found: ", pca_file)
+}
+if (!file.exists(covariate_file)) {
+  stop("Covariate file not found: ", covariate_file)
+}
+
+cat("**Input files validated:**\n")
+cat("- PCA file:", pca_file, "\n")
+cat("- Covariate file:", covariate_file, "\n\n")
+```
+
+### A.3.2 Data Integrity Checks
+
+```{r data_checks, message=FALSE, warning=FALSE, echo=FALSE}
+# Pre-read checks
+pca_data_raw <- read.csv(pca_file, header = FALSE, nrows = 5)
+
+cat("**Data Format Checks:**\n\n")
+cat("- PCA file columns:", ncol(pca_data_raw), "\n")
+cat("- Expected: Column 1 = ID, Column 2 = Rep, Column 3 = index, Columns 4+ = eigenvalues/PCs\n")
+
+# Check for minimum required columns
+if (ncol(pca_data_raw) < 4) {
+  stop("ERROR: PCA file has fewer than 4 columns. Expected: ID, Rep, index, eigenvalues/PCs")
+}
+
+cat("- Format appears correct\n\n")
+```
+
+### A.3.3 Replicate Sets
+
+```{r get_pca_data, message=FALSE, warning=FALSE, echo=FALSE}
+# Read PCA results file
+df <- read.csv(
+  pca_file,
+  header = FALSE,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# Extract eigenvalues (row 1, col 4+)
+eigenvalues <- as.numeric(df[1, 4:ncol(df)])
+headers <- as.character(df[1, ])
+ev_df <- df[-1, ]
+colnames(ev_df) <- headers
+
+# Rename EV columns to PC1..PCn
+num_pcs <- ncol(ev_df) - 3
+pc_names <- paste0("PC", seq_len(num_pcs))
+colnames(ev_df)[4:ncol(ev_df)] <- pc_names
+
+# Convert PCs to numeric
+ev_df[pc_names] <- lapply(ev_df[pc_names], as.numeric)
+
+# Save processed data
+write.csv(ev_df, processed_pca_output, row.names = FALSE)
+
+# Standardize column names for consistency
+if ("Rep" %in% names(ev_df)) {
+  names(ev_df)[names(ev_df) == "Rep"] <- "REP"
+}
+if ("ID" %in% names(ev_df)) {
+  # ID column is already correct
+} else {
+  stop("Expected 'ID' column not found in PCA data")
+}
+
+# Verify we have the expected columns
+expected_cols <- c("ID", "REP", "index")
+missing_cols <- setdiff(expected_cols, names(ev_df))
+if (length(missing_cols) > 0) {
+  stop("Missing expected columns: ", paste(missing_cols, collapse = ", "))
+}
+
+# Count replicate groups
+library(dplyr)
+library(knitr)
+
+n_groups <- length(unique(ev_df$REP))
+n_samples <- nrow(ev_df)
+
+# Create detailed replicate group table
+rep_group_summary <- ev_df %>%
+  group_by(REP) %>%
+  summarise(
+    N_Samples = n(),
+    Sample_IDs = paste(ID, collapse = ", ")
+  ) %>%
+  arrange(REP)
+
+# Add group type
+rep_group_summary <- rep_group_summary %>%
+  mutate(
+    Group_Type = case_when(
+      N_Samples == 2 ~ "Pair",
+      N_Samples == 3 ~ "Trio",
+      N_Samples == 4 ~ "Quad",
+      TRUE ~ paste0("Group_", N_Samples)
+    )
+  ) %>%
+  select(REP, Group_Type, N_Samples, Sample_IDs)
+
+cat("**Technical Replicate Summary:**\n\n")
+cat("- **", n_groups, "Replicate Groups**\n")
+cat("- **", n_samples, "Total Samples**\n")
+cat("- **", num_pcs, "Principal Components**\n\n")
+
+# Print table
+kable(rep_group_summary,
+      col.names = c("Replicate", "Type", "N", "Sample IDs"),
+      caption = "Replicate Group Details")
+
+cat("\n**Expected Analysis Behavior:**\n\n")
+cat("- Technical replicates should show near-zero variation in early PCs\n")
+cat("- Replicate split expected around PC", n_groups - 1, "(n_groups - 1)\n")
+cat("- SD > ", sd_threshold_early_pcs, " in early PCs indicates potential technical issues\n\n")
+```
+
+### A.3.4 Covariates
+
+```{r get_cov_data, message=FALSE, warning=FALSE, echo=FALSE}
+library(dplyr)
+
+# Read covariate file and filter to samples in PCA
+covariates_raw <- read.csv(covariate_file)
+
+# Check for samples in PCA but not in covariates
+samples_missing_cov <- setdiff(ev_df$ID, covariates_raw$SampleID)
+if (length(samples_missing_cov) > 0) {
+  warning("WARNING: ", length(samples_missing_cov), " samples in PCA are missing from covariate file")
+  cat("Samples missing covariates:\n")
+  print(head(samples_missing_cov, 10))
+  if (length(samples_missing_cov) > 10) {
+    cat("... and", length(samples_missing_cov) - 10, "more\n")
+  }
+}
+
+covariates_filtered <- covariates_raw %>%
+  filter(SampleID %in% ev_df$ID) %>%
+  select(SampleID, Cohort_Site, Study, Round, Sex, DX_harmonized, Age_harmonized,
+         Age_baseline, APOE_reported, Race, Ethnicity, Technical_Replicate, PCR.free)
+
+# Recode Ethnicity and Race for readability
+covariates_filtered <- covariates_filtered %>%
+  mutate(
+    Ethnicity = recode(Ethnicity, `0` = "NH", `1` = "H"),
+    Race = recode(Race, `1` = "AI", `2` = "As", `4` = "Bl", `5` = "W", `6` = "Other")
+  )
+
+cat("**Covariate Summary:**\n\n")
+cat("- Samples with covariate data:", nrow(covariates_filtered), "\n")
+cat("- Cohort/Sites represented:", length(unique(covariates_filtered$Cohort_Site)), "\n")
+cat("- Studies represented:", length(unique(covariates_filtered$Study)), "\n")
+cat("- Sequencing rounds:", paste(sort(unique(covariates_filtered$Round)), collapse = ", "), "\n")
+if("PCR.free" %in% names(covariates_filtered)) {
+  pcr_free_summary <- table(covariates_filtered$PCR.free, useNA = "ifany")
+  cat("- Library prep types:\n")
+  for (type in names(pcr_free_summary)) {
+    if (!is.na(type)) {
+      cat("    - ", type, ": ", pcr_free_summary[type], "\n", sep = "")
+    } else {
+      cat("    - Missing: ", pcr_free_summary[type], "\n", sep = "")
+    }
+  }
+}
+cat("\n")
+```
+
+# B. Scree Plots
+
+For technical replicates, we expect minimal variance overall since these are the same individuals. Most variance should reflect library prep and sequencing differences, not biological variation.
+
+```{r scree_plot, message=FALSE, warning=FALSE, echo=FALSE}
+library(ggplot2)
+
+scree_data <- data.frame(
+  Component = 1:length(eigenvalues),
+  Eigenvalue = eigenvalues
+)
+
+var_explained <- (eigenvalues / sum(eigenvalues)) * 100
+n_pcs_gt1 <- sum(eigenvalues > 1)
+
+cat("- First 3 PCs explain", round(sum(var_explained[1:3]), 2), "% of variance\n")
+cat("- Number of PCs with eigenvalue > 1 (Kaiser criterion):", n_pcs_gt1, "\n")
+cat("- Expected replicate split at PC", n_groups - 1, "\n\n")
+
+# Full scree plot
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "orange") +
+  geom_vline(xintercept = n_samples - 1, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = n_groups - 1, linetype = "dashed", color = "blue") +
+  annotate("text", x = n_samples - 1, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = paste(n_samples - 1, "= (Samples - 1)"), color = "red", angle = 90, vjust = -0.5) +
+  annotate("text", x = n_groups - 1, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = paste(n_groups - 1, "= (Groups - 1)"), color = "blue", angle = 90, vjust = -0.5) +
+  labs(title = "Scree Plot - Technical Replicates", x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+
+# Zoom PC1-n
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "orange") +
+  coord_cartesian(xlim = c(1, min(n_pcs_zoom, length(eigenvalues)))) +
+  labs(title = paste0("Scree Plot (Zoomed PC1-PC", min(n_pcs_zoom, length(eigenvalues)), ")"),
+       x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+```
+
+# C. Replicate Splits
+
+For technical replicates, within-group SDs should be extremely close to zero across all PCs until the replicate split point, as these represent the same biological sample.
+
+```{r setup_replicate_functions, message=FALSE, warning=FALSE, echo=FALSE, class.source="fold-hide", results='asis'}
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(kableExtra)
+library(tibble)
+library(RColorBrewer)
+
+calculate_replicate_spread <- function(data_df, rep_col, pc_cols, cache_file = NULL) {
+
+  if (!is.null(cache_file) && file.exists(cache_file)) {
+    message("Loading cached replicate spreads from ", cache_file)
+    return(readRDS(cache_file))
+  }
+
+  # Validate inputs
+  if (!rep_col %in% names(data_df)) {
+    stop("Column '", rep_col, "' not found in data. Available columns: ", paste(names(data_df), collapse = ", "))
+  }
+
+  spread_list <- list()
+  unique_reps <- unique(data_df[[rep_col]])
+
+  for (rep in unique_reps) {
+    rep_data <- data_df[data_df[[rep_col]] == rep, ]
+
+    if (nrow(rep_data) < 2) next
+
+    # Classify replicate type based on group size
+    n_samples <- nrow(rep_data)
+    rep_type <- if (n_samples == 2) {
+      "Pair"
+    } else if (n_samples == 3) {
+      "Trio"
+    } else if (n_samples == 4) {
+      "Quad"
+    } else {
+      paste0("Group_", n_samples)
+    }
+
+    spreads <- data.frame(
+      Replicate = rep,
+      N_samples = n_samples,
+      Rep_Type = rep_type
+    )
+
+    for (pc in pc_cols) {
+      pc_values <- rep_data[[pc]]
+      spreads[[paste0(pc, "_sd")]] <- sd(pc_values)
+    }
+
+    spread_list[[length(spread_list) + 1]] <- spreads
+  }
+
+  # Check if we found any replicate groups
+  if (length(spread_list) == 0) {
+    stop("No replicate groups with 2+ samples found. Check that '", rep_col, "' column contains replicate group IDs.")
+  }
+
+  all_spreads <- do.call(rbind, spread_list)
+
+  if (!is.null(cache_file)) {
+    message("Saving replicate spreads to ", cache_file)
+    saveRDS(all_spreads, cache_file)
+  }
+
+  return(all_spreads)
+}
+
+plot_pc_range <- function(data_df, pc_min, pc_max, top_flag = NULL, sd_threshold = 1e-4) {
+
+  data_sub <- data_df %>%
+    filter(PC_num >= pc_min, PC_num <= pc_max)
+
+  pc_levels <- data_sub %>%
+    distinct(PC, PC_num) %>%
+    arrange(PC_num) %>%
+    pull(PC)
+
+  data_sub <- data_sub %>%
+    mutate(PC = factor(PC, levels = pc_levels))
+
+  # Get unique replicates and assign colors
+  unique_reps <- sort(unique(data_sub$Replicate))
+  n_reps <- length(unique_reps)
+
+  # Use a color palette that can handle many categories
+  if (n_reps <= 8) {
+    rep_colors <- RColorBrewer::brewer.pal(max(3, n_reps), "Set2")[1:n_reps]
+  } else if (n_reps <= 12) {
+    rep_colors <- RColorBrewer::brewer.pal(n_reps, "Set3")
+  } else {
+    rep_colors <- rainbow(n_reps)
+  }
+  names(rep_colors) <- unique_reps
+
+  p <- ggplot(data_sub, aes(x = PC, y = SD))
+
+  if (!is.null(top_flag)) {
+    p <- p + geom_point(
+      data = data_sub %>% filter(!.data[[top_flag]]),
+      aes(color = Replicate),
+      position = position_dodge(width = 0.5),
+      alpha = 0.4,
+      size = 1.2
+    )
+    p <- p + geom_point(
+      data = data_sub %>% filter(.data[[top_flag]]),
+      aes(color = Replicate),
+      position = position_dodge(width = 0.5),
+      alpha = 0.8,
+      size = 1.5
+    )
+  } else {
+    p <- p + geom_point(
+      data = data_sub,
+      aes(color = Replicate),
+      position = position_dodge(width = 0.5),
+      alpha = 0.6,
+      size = 1.2
+    )
+  }
+
+  theme_settings <- if ((pc_max - pc_min) > 50) {
+    theme(axis.text.x = element_blank())
+  } else {
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = rel(0.7)))
+  }
+
+  p <- p +
+    labs(
+      title = paste0("Technical Replicate SDs: PC", pc_min, "–PC", pc_max),
+      x = "Principal Component",
+      y = "Standard Deviation",
+      color = "Replicate"
+    ) +
+    scale_color_manual(values = rep_colors) +
+    scale_y_continuous(limits = c(0, NA)) +
+    theme_minimal() +
+    theme_settings
+
+  return(p)
+}
+
+print_high_sd_reps <- function(data_df, plot_data, pc_min, pc_max, sd_threshold = 0.1) {
+  
+  data_sub <- data_df %>%
+    filter(PC_num >= pc_min, PC_num <= pc_max, SD > sd_threshold) %>%
+    arrange(desc(SD))
+  
+  if (nrow(data_sub) == 0) {
+    cat("No replicates with SD >", sd_threshold, "in PC", pc_min, "-", pc_max, "\n\n")
+    return(invisible(NULL))
+  }
+  
+  joined_data <- data_sub %>%
+    left_join(plot_data, by = c("Replicate" = "REP"))
+  
+  all_pc_colnames <- names(joined_data) %>% stringr::str_subset("^PC\\d+$")
+  
+  enriched <- joined_data %>%
+    mutate(
+      Values = purrr::map2(
+        .x = seq_len(nrow(joined_data)),
+        .y = PC_num,
+        .f = function(row_index, pc_num_value) {
+          target_col_name <- paste0("PC", pc_num_value)
+          return(joined_data[[target_col_name]][row_index])
+        }
+      )
+    )
+  
+  summary_table <- enriched %>%
+    arrange(PC_num, SD) %>%
+    transmute(
+      PC,
+      ID,
+      Replicate,
+      Cohort_Site,
+      Round,
+      PCR.free,
+      SD,
+      Values = sapply(Values, function(x) paste(x, collapse = ", "))
+    )
+  
+  cat("\n**Technical Replicates with SD >", sd_threshold, "for PC", pc_min, "-", pc_max, ":**\n\n")
+  print(knitr::kable(summary_table, row.names = FALSE, digits = 5))
+  
+  return(invisible(summary_table))
+}
+
+find_variable_replicates <- function(replicate_spreads, threshold = 0) {
+  
+  sd_cols <- grep("_sd$", names(replicate_spreads), value = TRUE)
+  
+  variable_reps <- replicate_spreads %>%
+    mutate(max_sd = pmax(!!!syms(sd_cols))) %>%
+    filter(max_sd > threshold) %>%
+    select(Replicate, N_samples, max_sd) %>%
+    arrange(desc(max_sd))
+  
+  cat("\n**Replicate groups with SD >", threshold, ":**\n\n")
+  cat("Total:", nrow(variable_reps), "out of", nrow(replicate_spreads), "groups\n\n")
+  
+  print(knitr::kable(variable_reps, row.names = FALSE, digits = 4))
+  
+  return(invisible(variable_reps))
+}
+
+# Prepare plot_data
+collapse_rare_levels <- function(column, threshold = 75) {
+  level_counts <- table(column)
+  rare_levels <- names(level_counts[level_counts <= threshold])
+  
+  collapsed <- as.character(column)
+  collapsed[collapsed %in% rare_levels] <- "Other"
+  collapsed <- as.factor(collapsed)
+  
+  return(collapsed)
+}
+
+covariates_filtered$Cohort_Site_collapsed <- collapse_rare_levels(covariates_filtered$Cohort_Site)
+covariates_filtered$Study_collapsed <- collapse_rare_levels(covariates_filtered$Study)
+
+plot_data <- merge(ev_df, covariates_filtered, by.x = "ID", by.y = "SampleID")
+
+plot_data <- plot_data %>%
+  mutate(across(c(Cohort_Site, Study, Round, Race, Ethnicity, Sex, DX_harmonized,
+                  Cohort_Site_collapsed, Study_collapsed, PCR.free), as.factor))
+
+plot_data$Ethnicity <- factor(plot_data$Ethnicity, levels = c("NH", "H", "Other"))
+plot_data$Race <- factor(plot_data$Race, levels = c("W", "Bl", "As", "AI", "Other"))
+
+# Ensure PCR.free has proper factor levels
+if("PCR.free" %in% names(plot_data)) {
+  plot_data$PCR.free <- factor(plot_data$PCR.free,
+                                levels = c("PCRFree", "PCRAmplified"),
+                                labels = c("PCR-free", "PCR-amplified"))
+}
+```
+
+## C.1 Overall Visualization
+
+```{r rep_splits_overall, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, results='asis'}
+
+pc_cols <- paste0("PC", 1:num_pcs) 
+
+replicate_spreads <- calculate_replicate_spread(
+  plot_data,
+  rep_col = "REP",
+  pc_cols = pc_cols,
+  cache_file = replicate_spreads_cache
+)
+
+spreads_long <- replicate_spreads %>%
+  select(Replicate, N_samples, ends_with("_sd")) %>%
+  pivot_longer(cols = ends_with("_sd"),
+               names_to = "PC",
+               values_to = "SD") %>%
+  mutate(PC = gsub("_sd", "", PC),
+         PC_num = as.numeric(gsub("PC", "", PC)))
+
+spreads_long <- spreads_long %>%
+  group_by(PC) %>%
+  mutate(pcut = quantile(SD, top_percentile_cutoff, na.rm = TRUE),
+         Top = SD > pcut) %>%
+  ungroup()
+
+plot_pc_range(spreads_long, pc_min = 1, pc_max = num_pcs)
+
+variable_reps <- find_variable_replicates(replicate_spreads, threshold = 0)
+```
+
+## C.2 Early PCs (Technical Quality)
+
+For technical replicates, early PCs should show near-zero within-group variation. Any elevation suggests technical issues.
+
+```{r rep_splits_early, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, results='asis'}
+plot_pc_range(spreads_long, pc_min = early_pcs_range[1], pc_max = early_pcs_range[2])
+print_high_sd_reps(spreads_long, plot_data, pc_min = early_pcs_range[1], pc_max = early_pcs_range[2],
+                   sd_threshold = sd_threshold_early_pcs)
+```
+
+## C.3 Replicate Split Region
+
+```{r rep_splits_middle, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, results='asis'}
+plot_pc_range(spreads_long, pc_min = split_region_range[1], pc_max = split_region_range[2])
+print_high_sd_reps(spreads_long, plot_data, pc_min = split_region_range[1], pc_max = split_region_range[2],
+                   sd_threshold = sd_threshold_split_region)
+```
+
+## C.4 Late PCs
+
+```{r rep_splits_late, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, results='asis'}
+late_pc_end <- if (is.na(late_pcs_range[2])) num_pcs else late_pcs_range[2]
+plot_pc_range(spreads_long, pc_min = late_pcs_range[1], pc_max = late_pc_end)
+print_high_sd_reps(spreads_long, plot_data, pc_min = late_pcs_range[1], pc_max = late_pc_end,
+                   sd_threshold = sd_threshold_split_region)
+```
+
+# D. Eigenvector Plots
+
+```{r setup_plotting_functions, message=FALSE, warning=FALSE, echo=FALSE, class.source="fold-hide"}
+library(ggplot2)
+library(kableExtra)
+
+plot_pcs <- function(df, pc_x, pc_y, color_by, shape_by = NULL,
+                     color_title = NULL, shape_title = NULL,
+                     var_explained = NULL) {
+
+  if (is.null(color_title)) color_title <- color_by
+  if (is.null(shape_title)) shape_title <- shape_by
+
+  x_label <- pc_x
+  y_label <- pc_y
+  if (!is.null(var_explained)) {
+    pc_x_num <- as.numeric(gsub("PC", "", pc_x))
+    pc_y_num <- as.numeric(gsub("PC", "", pc_y))
+    x_label <- paste0(pc_x, " (", round(var_explained[pc_x_num], 2), "%)")
+    y_label <- paste0(pc_y, " (", round(var_explained[pc_y_num], 2), "%)")
+  }
+
+  p <- ggplot(df, aes(x = .data[[pc_x]], y = .data[[pc_y]],
+                      color = .data[[color_by]]))
+
+  if (!is.null(shape_by)) {
+    p <- p + geom_point(aes(shape = .data[[shape_by]]), size = 1.5, stroke = 0.5)
+    p <- p + scale_shape_manual(values = c(1, 2, 0, 5, 6), na.value = 4)
+  } else {
+    p <- p + geom_point(size = 1.5, stroke = 0.5, shape = 1)
+  }
+
+  # Use custom colors for REP column (replicate groups)
+  if (color_by == "REP") {
+    unique_reps <- sort(unique(df[[color_by]]))
+    n_reps <- length(unique_reps)
+
+    if (n_reps <= 8) {
+      rep_colors <- RColorBrewer::brewer.pal(max(3, n_reps), "Set2")[1:n_reps]
+    } else if (n_reps <= 12) {
+      rep_colors <- RColorBrewer::brewer.pal(n_reps, "Set3")
+    } else {
+      rep_colors <- rainbow(n_reps)
+    }
+    names(rep_colors) <- unique_reps
+
+    p <- p + scale_color_manual(values = rep_colors)
+  }
+
+  p <- p +
+    labs(x = x_label, y = y_label, color = color_title, shape = shape_title) +
+    theme_minimal()
+
+  return(p)
+}
+```
+
+## D.1 PC1 vs PC2
+
+Technical replicates should cluster tightly. Any separation could indicate technical issues (library prep, PCR-free vs standard).
+
+### D.1.1 By Technical Factors
+
+```{r pc_plots_12_tech, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC1", "PC2", color_by = "Round", var_explained = var_explained)
+plot_pcs(plot_data, "PC1", "PC2", color_by = "PCR.free", var_explained = var_explained)
+```
+
+### D.1.2 By Replicate Group
+
+```{r pc_plots_12_rep, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC1", "PC2", color_by = "REP",
+         color_title = "Replicate", var_explained = var_explained)
+```
+
+### D.1.3 By Cohort/Site
+
+```{r pc_plots_12_cohort, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC1", "PC2", color_by = "Cohort_Site", var_explained = var_explained)
+```
+
+## D.2 PC2 vs PC3
+
+### D.2.1 By Technical Factors
+
+```{r pc_plots_23_tech, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC2", "PC3", color_by = "Round", var_explained = var_explained)
+plot_pcs(plot_data, "PC2", "PC3", color_by = "PCR.free", var_explained = var_explained)
+```
+
+### D.2.2 By Replicate Group
+
+```{r pc_plots_23_rep, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC2", "PC3", color_by = "REP",
+         color_title = "Replicate", var_explained = var_explained)
+```
+
+## D.3 PC3 vs PC4
+
+### D.3.1 By Technical Factors
+
+```{r pc_plots_34_tech, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC3", "PC4", color_by = "Round", var_explained = var_explained)
+plot_pcs(plot_data, "PC3", "PC4", color_by = "PCR.free", var_explained = var_explained)
+```
+
+### D.3.2 By Replicate Group
+
+```{r pc_plots_34_rep, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+plot_pcs(plot_data, "PC3", "PC4", color_by = "REP",
+         color_title = "Replicate", var_explained = var_explained)
+```
+
+## D.4 Additional Covariates
+
+```{r pc_plots_additional, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+# Plot by study if there are multiple studies
+if (length(unique(plot_data$Study)) > 1) {
+  plot_pcs(plot_data, "PC1", "PC2", color_by = "Study_collapsed", var_explained = var_explained)
+}
+
+# Plot by sex if variable
+if (length(unique(plot_data$Sex)) > 1) {
+  plot_pcs(plot_data, "PC1", "PC2", color_by = "Sex", var_explained = var_explained)
+}
+```
+
+# E. Summary
+
+```{r summary_stats, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+library(dplyr)
+
+# Calculate summary statistics
+early_pcs_data <- spreads_long %>%
+  filter(PC_num <= 40)
+
+max_early_sd <- max(early_pcs_data$SD, na.rm = TRUE)
+
+high_sd_reps <- early_pcs_data %>%
+  filter(SD > sd_threshold_early_pcs) %>%
+  distinct(Replicate)
+
+n_high_early_sd <- nrow(high_sd_reps)
+
+pc_at_max_eigenvalue <- which.max(eigenvalues)
+first_pc_below_1 <- min(which(eigenvalues < 1), na.rm = TRUE)
+
+cat("**Key Findings:**\n\n")
+cat("- **Dataset**: ", n_samples, " technical replicate samples across ", n_groups, " groups\n")
+cat("- **Principal Components**: ", num_pcs, " PCs calculated\n")
+cat("- **Variance**: First 3 PCs explain ", round(sum(var_explained[1:3]), 2), "% of variance\n")
+cat("- **Kaiser Criterion**: ", n_pcs_gt1, " PCs with eigenvalue > 1\n\n")
+
+cat("**Technical Replicate Quality:**\n\n")
+cat("- Maximum SD in early PCs (1-40): ", format(max_early_sd, scientific = TRUE, digits = 3), "\n")
+cat("- Replicate groups with SD > ", sd_threshold_early_pcs, " in early PCs: ", n_high_early_sd, " out of ", n_groups, "\n")
+cat("- Expected replicate split point: PC", n_groups - 1, "\n\n")
+
+cat("**Technical Factors to Examine:**\n\n")
+cat("- PCR-free vs standard library preparation\n")
+cat("- Sequencing round differences\n")
+cat("- Cohort/Site effects\n\n")
+
+if (n_high_early_sd == 0) {
+  assessment <- "excellent"
+} else if (n_high_early_sd / n_groups < 0.1) {
+  assessment <- "very good"
+} else if (n_high_early_sd / n_groups < 0.25) {
+  assessment <- "good"
+} else {
+  assessment <- "variable"
+}
+
+cat("**Overall Assessment**: Technical replicates demonstrate **", assessment, "** concordance.\n")
+if (n_high_early_sd > 0) {
+  cat("Review the flagged replicate groups in Section C.2 for potential technical issues.\n")
+}
+```
