@@ -271,13 +271,15 @@ cat("\n")
 
 **Detailed Replicate Group Information:** This section shows the technical covariates for each replicate group. Technical replicates from the same individual have been processed at different sequencing centers, in different rounds, or with different library preparation methods (PCR-free vs PCR-amplified).
 
--   TECH1, TECH2 and TECH3 are the largest replicate groups. They include replicate samples both PCRFree and PCR Amplified preps in r1.
-
-    -   TECH3 is missing the replicate sample from LASI-DAD.
-
--   TECH4, TECH5 and TECH6 have dropped the three PCRAmplified samples from r1.
-
-    -   TECH5 is missing the replicate samples from LASI-DAD and GARD1.
+-   TECH1, TECH2 and TECH3 are the first replicate groups that were used in the initial ADSP-Discovery sequencing studies. They include replicate samples both PCR-free and PCR-amplified preps in r1 and they were carried forward throughout subsequent sequencing rounds.
+  -   The three unique samples are from the same family (TECH1 = mother, TECH2 and TECH3 = full sibling offspring of TECH1)
+  -   TECH3 is missing the replicate sample in the LASI-DAD study.
+-   TECH4, TECH5 and TECH6 were introduced in the ADSP-Extension studies and have dropped the three PCR-Amplified samples from r1. They were also carried forward in subsequent sequencing rounds.
+  -   TECH5 is missing the replicate samples from LASI-DAD and GARD1.
+- Based on reported NIH Race and Ethnicity categories:
+  - TECH1, TECH2, TECH3 and TECH4 are Hispanic
+  - TECH5 is Non-Hispanic white
+  - TECH6 is Non-Hispanic black
 
 ```{r replicate_details, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
 # Merge replicate data with covariates
@@ -715,7 +717,7 @@ print_high_sd_reps(spreads_long, plot_data, pc_min = early_pcs_range[1], pc_max 
 
 ## C.3 Replicate Split Region
 
-The replicate-split region includes PC6-PC16. Each PC in the region shows a single replicate group with elevated SDs, indicative of the PC separating samples within the group. All groups appear twice in the region expect for TECH5, the smallest group.
+The replicate-split region includes PC6-PC16. Each PC in the region shows a single replicate group with elevated SDs, indicative of the PC separating samples within the group. All groups appear twice in the region except for TECH5, the smallest group.
 
 ```{r rep_splits_middle, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, results='asis'}
 plot_pc_range(spreads_long, pc_min = split_region_range[1], pc_max = split_region_range[2])
@@ -909,7 +911,7 @@ print_points <- function(df, pc_x, pc_y, x_range = NULL, y_range = NULL, n = 5) 
 
 ## D.1 PC1 vs PC2
 
-PC1 splits the samples into two sets: TECH1, TECH2, TECH3 vs. TECH4, TECH5, TECH6. These are sets with and without the PCRAmplified samples, respectively.
+PC1 splits the samples into two sets: TECH1, TECH2, TECH3 vs. TECH4, TECH5, TECH6. These are sets with and without the PCR-amplified samples, respectively.
 
 ```{r pc_plots_12, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
 plot_pcs(plot_data, "PC1", "PC2", color_by = "REP",
@@ -934,7 +936,7 @@ plot_pcs(plot_data, "PC3", "PC4", color_by = "REP",
 
 ## D.4 PC4 vs PC5
 
-PC4 and PC5 separate TECH1, TECH2 and TECH3 from each other.
+PC4 and PC5 separate TECH1, TECH2 and TECH3 from each other. Specifically PC4 separates the mother, TECH1, from her two offspring, and PC5 separates her two full-sibling offspring, TECH2 from TECH3.
 
 ```{r pc_plots_45, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
 plot_pcs(plot_data, "PC4", "PC5", color_by = "REP",
@@ -1241,11 +1243,9 @@ rep_samples <- plot_data %>%
 print(knitr::kable(rep_samples, row.names = FALSE, digits = 5))
 ```
 
-**Interpretation:** The eigenvector plots (D.1-D.4) visualize the first five PCs, where technical replicates cluster tightly together. These explain most of the variation as they should. It is possible that TECH1, TECH2 and TECH3 are from related samples, which would explain why they cluster together most tightly.
+**Interpretation:** The eigenvector plots (D.1-D.4) visualize the first five PCs, where technical replicates cluster tightly together. These explain most of the variation as they should. TECH1, TECH2 and TECH3 are from the same family (mother and full-sibling offspring), which explains why they cluster together most tightly in the earliest PCs. Notably, PC1 splits the replicate groups into two sets: those with the PCR-amplified prep and those without.
 
-***Note to self***: Check if the EFIGA replicates 1,2 and 3 are family members.
-
-The analysis of PC6-PC16 (D.6) in the replicate split region is where technical factors begin to separate samples. The consitent outlier in all replicate groups are samples from the ADSP-Extension-Fam study sequenced at WASHU with the PCR-free prep. The ADSP-Extension-CC study at WASHU with PCR-free prep also showed differences in multiple groups, as did, the LASI-DAD sample in TECH4 and the ADSP-FUS2-Replicates sample in TECH6. Prep does not explain any differences in the replicate-split region.
+The analysis of PC6-PC16 (D.6) in the replicate split region is where technical factors begin to separate samples. The consistent outlier in all replicate groups are samples from the ADSP-Extension-Fam study sequenced at WASHU with the PCR-free prep. The ADSP-Extension-CC study at WASHU with PCR-free prep also showed differences in multiple groups, as did, the LASI-DAD sample in TECH4 and the ADSP-FUS2-Replicates sample in TECH6. Prep does not explain any differences in the replicate-split region, perhaps because differences due to prep were captured by PC1.
 
 # E. Summary
 
@@ -1254,7 +1254,7 @@ library(dplyr)
 
 # Calculate summary statistics
 early_pcs_data <- spreads_long %>%
-  filter(PC_num <= 40)
+  filter(PC_num <= 5)
 
 max_early_sd <- max(early_pcs_data$SD, na.rm = TRUE)
 
@@ -1270,15 +1270,14 @@ first_pc_below_1 <- min(which(eigenvalues < 1), na.rm = TRUE)
 cat("**Key Findings:**\n\n")
 cat("- **Dataset**: ", n_samples, " technical replicate samples across ", n_groups, " groups\n")
 cat("- **Principal Components**: ", num_pcs, " PCs calculated\n")
-cat("- **Variance**: First 3 PCs explain ", round(sum(var_explained[1:3]), 2), "% of variance\n")
+cat("- **Variance**: First 5 PCs explain ", round(sum(var_explained[1:5]), 2), "% of variance\n")
 cat("- **Kaiser Criterion**: ", n_pcs_gt1, " PCs with eigenvalue > 1\n\n")
 
 cat("**Technical Replicate Quality:**\n\n")
-cat("- Maximum SD in early PCs (1-40): ", format(max_early_sd, scientific = TRUE, digits = 3), "\n")
-cat("- Replicate groups with SD > ", sd_threshold_early_pcs, " in early PCs: ", n_high_early_sd, " out of ", n_groups, "\n")
-cat("- Expected replicate split point: PC", n_groups - 1, "\n\n")
+cat("- Very low within-group SD in early PCs (1-5): ", format(max_early_sd, scientific = TRUE, digits = 3), "\n")
+cat("- Expected replicate split point: PC",n_groups - 1, "\n\n")
 
-cat("**Technical Factors to Examine:**\n\n")
+cat("**Technical Factors Examined:**\n\n")
 cat("- PCR-free vs standard library preparation\n")
 cat("- Sequencing round differences\n")
 cat("- Sequencing center differences\n")
@@ -1294,33 +1293,24 @@ if (n_high_early_sd == 0) {
   assessment <- "variable"
 }
 
-cat("**Overall Assessment**: Technical replicates demonstrate **", assessment, "** concordance.\n\n")
-
-if (n_high_early_sd > 0) {
-  cat("Review the flagged replicate groups in Section C.2 for potential technical issues.\n\n")
-}
 
 cat("**Key Observations:**\n\n")
-cat("1. **Sequencing Center Effect**: Sequencing_Center appears to be the primary driver of technical variation, as evidenced by the cluster patterns in Section D.6. Samples from different sequencing centers show systematic separation in the replicate split region (PC6-PC16), suggesting site-specific differences in protocols, equipment, or reagents.\n\n")
+cat("1. **PCR Prep Effect on Early PCs**: PC1 cleanly separates replicate groups by library preparation method, dividing samples into PCR-amplified (TECH1, TECH2, TECH3) vs. PCR-free (TECH4, TECH5, TECH6) groups. This is the dominant source of variation in the dataset.\n\n")
 
-cat("2. **Replicate Split Pattern**: The expected replicate split occurs around PC", n_groups - 1, ", consistent with the theoretical expectation. Before this point, technical replicates should be nearly identical; after this point, technical variation from library preparation and sequencing becomes observable.\n\n")
+cat("2. **Between-Group Separation**: PC2-PC5 separate individual replicate groups from each other, with technical replicates clustering tightly within their groups. This represents biological differences between individuals. Notably, TECH1, TECH2, and TECH3 are from teh same family (mother and full-sibling offspring), which explains their particularly tight clustering and is captured by PC4-PC5 which separate the mother from her offspring and the two siblings from each other.\n\n")
 
-cat("3. **Technical Batch Effects**: The following technical factors contribute to variation:\n")
-cat("   - **Sequencing_Center**: Primary source of batch effects (strongest signal)\n")
-cat("   - **PCR.free vs PCR-amplified**: Library preparation method differences\n")
-cat("   - **Round**: Sequencing batch/run differences\n")
-cat("   - **Cohort_Site**: Sample collection site effects\n\n")
+cat("3. **Replicate Split Pattern**: The expected replicate split occurs after PC",n_groups - 1, ", consistent with theoretical expectations if most variation is among the six replicate groups rather than with. Before this point, technical replicates cluster tightly together; after this point, within-group technical variation becomes observable.\n\n")
 
-cat("4. **Quality Control Recommendations**:\n")
-if (n_high_early_sd > 0) {
-  cat("   - ", n_high_early_sd, " replicate groups show unexpectedly high SD in early PCs, indicating potential sample swaps, labeling errors, or severe technical issues\n")
-}
-cat("   - Consider batch effect correction methods (e.g., ComBat, surrogate variable analysis) to adjust for Sequencing_Center differences before downstream analysis\n")
-cat("   - Replicates with large spreads in the cluster analysis (Section D.6) may need to be flagged or removed\n")
-cat("   - Sequencing_Center should be included as a covariate in all downstream association analyses\n\n")
+cat("4. **Study and Sequencing Center Effects in Split Region**: In the replicate split region (PC6-PC16), the consistent outliers are samples from specific Study/Sequencing_Center combinations:\n")
+cat("   - **ADSP-Extension-Fam samples at WASHU** appear as outliers in multiple replicate groups\n")
+cat("   - **ADSP-Extension-CC samples at WASHU** also show separation in several groups\n")
+cat("   - **LASI-DAD sample in TECH4** (MEDGENOME sequencing center)\n")
+cat("   - **ADSP-FUS2-Replicates sample in TECH6** (USUHS sequencing center)\n")
+cat("   - Notably, **PCR prep does NOT explain differences in the replicate-split region** - the separation is driven by Study and Sequencing_Center combinations\n\n")
 
-cat("5. **Next Steps**:\n")
-cat("   - Investigate replicate groups flagged in Sections C.2-C.4 for potential technical problems\n")
-cat("   - Consider harmonization strategies across sequencing centers\n")
-cat("   - Evaluate whether batch effects can be adequately corrected or if certain samples should be excluded\n")
+cat("5. **Quality Control Recommendations**:\n")
+cat("   - The consistent outlier pattern for WASHU/ADSP-Extension-Fam samples suggests systematic differences that should be investigated\n")
+cat("   - Consider whether samples from specific Study/Sequencing_Center combinations require batch effect correction or exclusion when using those datasets\n")
+cat("   - Later sequencing rounds show excellent concordance in PC space.\n\n")
+
 ```
