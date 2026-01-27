@@ -58,11 +58,8 @@ Technical_Replicates/data/*
 Technical_Replicates/*.csv
 Technical_Replicates/*.rds
 Technical_Replicates/*.html
-Technical_Replicates/figures/*
-
 # Keep folder structure
 !Technical_Replicates/data/.gitkeep
-!Technical_Replicates/figures/.gitkeep
 
 # System files
 .DS_Store
