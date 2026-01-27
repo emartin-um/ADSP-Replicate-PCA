@@ -58,8 +58,16 @@ Technical_Replicates/data/*
 Technical_Replicates/*.csv
 Technical_Replicates/*.rds
 Technical_Replicates/*.html
+# Non-Technical Replicates - ignore data and generated files
+Non-Technical_Replicates/data/*
+Non-Technical_Replicates/*.csv
+Non-Technical_Replicates/*.rds
+Non-Technical_Replicates/*.html
+Non-Technical_Replicates/*.xlsx
+
 # Keep folder structure
 !Technical_Replicates/data/.gitkeep
+!Non-Technical_Replicates/data/.gitkeep
 
 # System files
 .DS_Store

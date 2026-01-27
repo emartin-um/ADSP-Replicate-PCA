@@ -1,0 +1,1103 @@
+---
+title: "Analysis of PCA from Non-Technical Replicates from ADSP R5"
+author: "ERM"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: hide
+---
+
+# A. R5 Replicate Data
+
+## A.1 Overview
+
+As part of the ADSP QC pipeline, we conduct principal component analysis (PCA) of replicate samples and analyze the results to evaluate both biological variation and technical replication quality. This document describes analyses of PCA in the *non-technical replicate samples* from the ADSP R5 post-QC dataset (technical replicates in a separate document).
+
+## A.2 Replicate PCA Protocol
+
+We follow the following protocol established by the ADSP QC Working Group:
+
+[**Replicate PCA Protocol**]{.underline}
+
+A principal components analysis (PCA) was implemented using replicate samples identified through identity-by-descent analysis. Only replicate groups that include at least one sample from this sequencing round (r5) are included.
+
+-   Select variants (SNVs or INDELs) meeting all of the following criteria:
+
+    -   polymorphic among replicates
+
+    -   no genotype missingness across replicates
+
+    -   minor allele frequency (MAF)\>0.05
+
+    -   QC criteria from fields in \*.summary file: `GLNexusPass`=1 and `CallBad`=0 and `HiDepth`=0
+
+-   LD prune selected variants (r2 threshold of 0.8)
+
+-   Conduct PCA (EIGENSOFT/EIGENSTRAT) to obtain all eigenvectors (PCs) and eigenvalues
+
+### **Table 1. Number of variants (SNVs and INDELs) selected for PCA.**
+
+\*Polymorphic in the replicates
+
+\*\*Removing variants with missing genotypes or MAF[\<]{.underline}0.05
+
+|       DATASET        |  SNVs   | INDELS |  TOTAL  |
+|:--------------------:|:-------:|:------:|:-------:|
+|  Post-QC Overall\*   | 142,805 |  9646  | 152,451 |
+| Selected for PCA\*\* |  26410  |   0    | 26,410  |
+
+## A.3 Data Description
+
+### A.3.1 Replicate Sets
+
+```{r get_pca_data, message=FALSE, warning=FALSE, echo=TRUE}
+# Read PCA results file as a data frame
+df <- read.csv(
+  "data/Non-TECH_pruned_evec.csv",
+  header = FALSE,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# Extract eigenvalues (row 1, col 4+)
+eigenvalues <- as.numeric(df[1, 4:ncol(df)])
+headers <- as.character(df[1, ])
+ev_df <- df[-1, ]
+colnames(ev_df) <- headers
+
+# Rename EV columns to PC1..PCn
+num_pcs <- ncol(ev_df) - 3
+pc_names <- paste0("PC", seq_len(num_pcs))
+colnames(ev_df)[4:ncol(ev_df)] <- pc_names
+
+# Convert PCs to numeric
+ev_df[pc_names] <- lapply(ev_df[pc_names], as.numeric)
+
+# Save the reorganized data
+write.csv(ev_df, "processed_pca_data.csv", row.names = FALSE)
+```
+
+**These are the types and numbers of replicates that we have:**
+
+-   **1013 Groups**
+    -   889 Pairs
+    -   116 Trios
+    -   8 Quads
+-   **2158 Total Samples**
+
+All of these Groups have at least one sample sequenced in Round 5. Groups with replicates only from previous sequencing rounds were excluded since they have been analyzed previously.
+
+### A.3.2 Covariates
+
+We use the following coding for **reported** Race and Ethnicity:
+
+-   Race: *AI=American Indian/Alaska Native, As=Asian, Bl=Black or African American, W=White, 6=Other;*
+
+-   Ethnicity: *H=Hispanic or Latino, NH=Not Hispanic or Latino, NA=Not Applicable/Not Available.*
+
+```{r get_cov_data, message=FALSE, warning=FALSE, echo=TRUE}
+library(dplyr)
+
+covariates_filtered <- read.csv("data/r5_replicate_covariates.csv") %>%
+  filter(SampleID %in% ev_df$ID) %>%
+  select(SampleID, Cohort_Site, Study, Round, Sex, DX_harmonized, Age_harmonized, 
+         Age_baseline, APOE_reported, Race, Ethnicity)
+
+# Recode Ethnicity and Race
+covariates_filtered <- covariates_filtered %>%
+  mutate(
+    Ethnicity = recode(Ethnicity, `0` = "NH", `1` = "H"),
+    Race = recode(Race, `1` = "AI", `2` = "As", `4` = "Bl", `5` = "W", `6` = "Other")
+  )
+```
+
+# B. Scree Plots
+
+-   We see from the scree plots below that the first 3 PCs explain `r round(sum(100*eigenvalues[1:3])/sum(eigenvalues),2)` percent of the variance. As we show below in section D, these primarily capture race and ethnicity differences among the replicate Groups.
+-   The rest of the variance spreads out in small portions over the 2157 PCs.
+-   The variance explained by the PCs drops rapidly to 0 after PC1012, becoming 0 within the limits of precision at PC1022.
+    -   This makes sense because, if replicate genotypes match well, then the first 1012 PCs should capture the variation among the 1013 Groups of replicates.
+    -   After that PCs should explain variation within Groups, which we expect to be small.
+
+```{r scree_plot, message=FALSE, warning=FALSE, echo=TRUE}
+library(ggplot2)
+
+scree_data <- data.frame(
+  Component = 1:length(eigenvalues),
+  Eigenvalue = eigenvalues
+)
+
+# Full scree plot
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 2157, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1012, linetype = "dashed", color = "blue") +
+  annotate("text", x = 2157, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = "2157 = (Samples - 1)", color = "red", angle = 90, vjust = -0.5) +
+  annotate("text", x = 1012, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = "1012 = (Groups - 1)", color = "blue", angle = 90, vjust = -0.5) +
+  labs(title = "Scree Plot", x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+
+# Zoom PC1-10
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  coord_cartesian(xlim = c(1, 10)) +
+  labs(title = "Scree Plot (Zoomed PC1-PC10)", x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+
+# Zoom PC4-1000
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 1012, linetype = "dashed", color = "blue") +
+  annotate("text", x = 1012, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = "1012 = (Groups - 1)", color = "blue", angle = 90, vjust = -0.5) +
+  coord_cartesian(xlim = c(4, 1000), ylim = c(0, 6)) +
+  labs(title = "Scree Plot (Zoomed PC4-PC1000)", x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+
+# Zoom PC1000-1022
+ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 1012, linetype = "dashed", color = "blue") +
+  annotate("text", x = 1012, y = max(scree_data$Eigenvalue) * 0.85, 
+           label = "1012 = (Groups - 1)", color = "blue", angle = 90, vjust = -0.5) +
+  coord_cartesian(xlim = c(1000, 1022), ylim = c(0, 1)) +
+  labs(title = "Scree Plot (Zoomed PC1000-PC1022)", x = "PC Number", y = "Eigenvalue") +
+  theme_minimal()
+```
+
+# C. Replicate Splits
+
+-   A more direct way to examine within-Group differences, which better represent technical differences, is to compute the within-Group standard deviations (SDs) of the loadings (eigenvector elements) for each Group, and to visualize them for each of the PCs.
+
+-   If sequencing is well replicated among the various sequencing rounds, then we expect SDs of PC loadings within Groups to be very close to 0.
+
+-   We expect that any variation among samples within Groups will be reflected in later PCs.
+
+-   The PC at which the replicates start to have large SDs is an imprtant QC metric. Ideally, we expect this point of "Replicate Split" to occur after the PC for the number of Groups minus 1 (PC1012 for this example).
+
+    ```{r setup_replicate_functions, message=FALSE, warning=FALSE, echo=TRUE, results= 'asis'}
+    library(tidyr)
+    library(dplyr)
+    library(purrr) 
+    library(kableExtra)
+    library(tibble)
+
+    calculate_replicate_spread <- function(data_df, rep_col, pc_cols, cache_file = NULL) {
+      
+      if (!is.null(cache_file) && file.exists(cache_file)) {
+        message("Loading cached replicate spreads from ", cache_file)
+        return(readRDS(cache_file))
+      }
+      
+      spread_list <- list()
+      unique_reps <- unique(data_df[[rep_col]])
+      
+      for (rep in unique_reps) {
+        rep_data <- data_df[data_df[[rep_col]] == rep, ]
+        
+        if (nrow(rep_data) < 2) next
+        
+        rep_type <- gsub("[0-9]+$", "", rep)
+        
+        spreads <- data.frame(
+          Replicate = rep,
+          N_samples = nrow(rep_data),
+          Rep_Type = rep_type
+        )
+        
+        for (pc in pc_cols) {
+          pc_values <- rep_data[[pc]]
+          spreads[[paste0(pc, "_sd")]] <- sd(pc_values)
+        }
+        
+        spread_list[[length(spread_list) + 1]] <- spreads
+      }
+      
+      all_spreads <- do.call(rbind, spread_list)
+      
+      if (!is.null(cache_file)) {
+        message("Saving replicate spreads to ", cache_file)
+        saveRDS(all_spreads, cache_file)
+      }
+      
+      return(all_spreads)
+    }
+
+    plot_pc_range <- function(data_df, pc_min, pc_max, top_flag = NULL, sd_threshold = 1e-4) {
+      
+      data_sub <- data_df %>%
+        filter(PC_num >= pc_min, PC_num <= pc_max)
+      
+      pc_levels <- data_sub %>%
+        distinct(PC, PC_num) %>%
+        arrange(PC_num) %>%
+        pull(PC)
+      
+      data_sub <- data_sub %>%
+        mutate(PC = factor(PC, levels = pc_levels))
+      
+      p <- ggplot(data_sub, aes(x = PC, y = SD))
+      
+      if (!is.null(top_flag)) {
+        p <- p + geom_point(
+          data_df = data_sub %>% filter(!.data_df[[top_flag]]),
+          aes(color = Rep_Type),
+          position = position_dodge(width = 0.5),
+          alpha = 0.4,
+          size = 1.2
+        )
+        p <- p + geom_point(
+          data_df = data_sub %>% filter(.data[[top_flag]]),
+          aes(color = Rep_Type),
+          position = position_dodge(width = 0.5),
+          alpha = 0.8,
+          size = 1.5
+        )
+      } else {
+        p <- p + geom_point(
+          data_df = data_sub,
+          aes(color = Rep_Type),
+          position = position_dodge(width = 0.5),
+          alpha = 0.6,
+          size = 1.2
+        )
+      }
+      
+      theme_settings <- if ((pc_max - pc_min) > 50) {
+        theme(axis.text.x = element_blank())
+      } else {
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = rel(0.7)))
+      }
+      
+      p <- p +
+        labs(
+          title = paste0("Replicate SDs: PC", pc_min, "–PC", pc_max),
+          x = "Principal Component",
+          y = "Standard Deviation",
+          color = "Replicate Type"
+        ) +
+        scale_color_manual(
+        values = c("Pair" = "blue", "Trio" = "green", "Quad"="red"),  # your colors
+        breaks = c("Pair", "Trio", "Quad")  # desired order
+      ) +
+        scale_y_continuous(limits = c(0, NA)) +
+        theme_minimal() +
+        theme_settings
+      
+      return(p)
+    }
+
+    print_high_sd_reps <- function(data_df, plot_data, pc_min, pc_max, sd_threshold = 0.1) {
+      
+      data_sub <- data_df %>%
+        filter(PC_num >= pc_min, PC_num <= pc_max, SD > sd_threshold) %>%
+        arrange(desc(SD))
+      
+      if (nrow(data_sub) == 0) {
+        cat("No replicates with SD >", sd_threshold, "in PC", pc_min, "-", pc_max, "\n\n")
+        return(invisible(NULL))
+      }
+
+    # 1. Join the data first as you were
+    joined_data <- data_sub %>%
+      left_join(plot_data, by = c("Replicate" = "REP"))
+
+    # 2. Get the full list of available PC column names in the joined data
+    # We assume the PC columns are consistently named "PC1", "PC2", etc.
+    # Replace with actual relevant PC column names if they are different:
+    all_pc_colnames <- names(joined_data) %>% stringr::str_subset("^PC\\d+$")
+
+    # 3. Use purrr::map2 to iterate row indices and PC_num values simultaneously
+    enriched <- joined_data %>%
+      mutate(
+        Values = purrr::map2(
+          .x = seq_len(nrow(joined_data)),       # .x gets the row index (1, 2, 3...)
+          .y = PC_num,                           # .y gets the value from the PC_num column (e.g., 1, 3, 2...)
+          .f = function(row_index, pc_num_value) {
+            # Dynamically create the exact column name we need for this row
+            target_col_name <- paste0("PC", pc_num_value)
+
+            # Extract the single value using base R indexing
+            return(joined_data[[target_col_name]][row_index])
+          }
+        )
+      )
+    # The 'Values' column will now contain a list of single numeric values, one for each row.
+
+    #Add ID and round, cohort_site. make like clusters
+
+      # Build summary table (values included)
+      summary_table <- enriched %>%
+        arrange(PC_num, SD) %>%
+        transmute(
+          PC,
+          ID,
+          Replicate,
+          Cohort_Site,
+          Round,
+          SD,
+          Values = sapply(Values, function(x) paste(x, collapse = ", "))
+        )
+      
+      cat("\n**Replicates with SD >", sd_threshold, "for PC", pc_min, "-", pc_max, ":**\n\n")
+      print(knitr::kable(summary_table, row.names = FALSE, digits = 5))
+      
+      return(invisible(summary_table))
+    }
+
+    # Function to find replicates with any non-zero SD
+    find_variable_replicates <- function(replicate_spreads, threshold = 0) {
+      
+      # Get all SD columns
+      sd_cols <- grep("_sd$", names(replicate_spreads), value = TRUE)
+      
+      # Find replicates with any SD > threshold
+      variable_reps <- replicate_spreads %>%
+        mutate(max_sd = pmax(!!!syms(sd_cols))) %>%
+        filter(max_sd > threshold) %>%
+        select(Replicate, max_sd) %>%
+        arrange(desc(max_sd))
+      
+      cat("\n**Replicate groups with SD >", threshold, ":**\n\n")
+      cat("Total:", nrow(variable_reps), "out of", nrow(replicate_spreads), "groups\n\n")
+      
+      print(knitr::kable(variable_reps, row.names = FALSE, digits = 4))
+      
+      return(invisible(variable_reps))
+    }
+
+    # Function to compute pairwise SD correlations among variable replicates
+    correlate_variable_reps <- function(replicate_spreads, variable_reps, corr_threshold = 0.7) {
+      
+      # Extract SD columns
+      sd_cols <- grep("_sd$", names(replicate_spreads), value = TRUE)
+      
+      # Filter replicate_spreads to only the variable replicates
+      sd_matrix <- replicate_spreads %>%
+        filter(Replicate %in% variable_reps$Replicate) %>%
+        select(Replicate, all_of(sd_cols))
+      
+      # Move Replicate to rownames so we can correlate the SD profiles
+      sd_vals <- sd_matrix %>%
+        column_to_rownames("Replicate")
+      
+      # Compute correlation matrix
+      cor_mat <- cor(t(sd_vals), use = "pairwise.complete.obs")
+      
+      # Convert to long-form pair list
+      cor_pairs <- as.data.frame(as.table(cor_mat)) %>%
+        rename(Rep1 = Var1, Rep2 = Var2, Correlation = Freq) %>%
+        filter(abs(Correlation) >= corr_threshold) %>%
+         filter(Rep1 != Rep2) %>%  
+        arrange(desc(abs(Correlation)))
+     
+       # Filter the data frame to keep only unique symmetric pairs
+    cor_pairs <- cor_pairs %>%
+     mutate(
+        # Explicitly convert to character before comparison
+        Pair_ID_A = pmin(as.character(Rep1), as.character(Rep2)),
+        Pair_ID_B = pmax(as.character(Rep1), as.character(Rep2))
+      ) %>%
+      # Deduplicate using the correct character-based IDs
+      distinct(Pair_ID_A, Pair_ID_B, .keep_all = TRUE) %>%
+      # Remove the temporary columns
+      select(-Pair_ID_A, -Pair_ID_B)
+      
+      # Print results
+      cat("\n**Pairwise correlations of SD profiles (|r| >=", corr_threshold, "):**\n\n")
+      
+      if (nrow(cor_pairs) == 0) {
+        cat("No replicate pairs above threshold.\n\n")
+        return(invisible(NULL))
+      }
+      
+      print(
+        knitr::kable(
+          cor_pairs,
+          row.names = FALSE,
+          digits = 4
+        )
+      )
+      
+      return(invisible(cor_pairs))
+    }
+
+    # Prepare plot_data for replicate analysis (needed for both C and D)
+    collapse_rare_levels <- function(column, threshold = 75) {
+      level_counts <- table(column)
+      rare_levels <- names(level_counts[level_counts <= threshold])
+      
+      collapsed <- as.character(column)
+      collapsed[collapsed %in% rare_levels] <- "Other"
+      collapsed <- as.factor(collapsed)
+      
+      return(collapsed)
+    }
+
+    covariates_filtered$Cohort_Site_collapsed <- collapse_rare_levels(covariates_filtered$Cohort_Site)
+    covariates_filtered$Study_collapsed <- collapse_rare_levels(covariates_filtered$Study)
+
+    plot_data <- merge(ev_df, covariates_filtered, by.x = "ID", by.y = "SampleID")
+
+    plot_data <- plot_data %>%
+      mutate(across(c(Cohort_Site, Study, Round, Race, Ethnicity, Sex, DX_harmonized,
+                      Cohort_Site_collapsed, Study_collapsed), as.factor))
+
+    plot_data$Ethnicity <- factor(plot_data$Ethnicity, levels = c("NH", "H", "Other"))
+    plot_data$Race <- factor(plot_data$Race, levels = c("W", "Bl", "As", "AI", "Other"))
+
+    var_explained <- (eigenvalues / sum(eigenvalues)) * 100
+    ```
+
+    ## C.1 Overall Visualization
+
+-   The overall plot of within-Group standard deviations for PC1-PC2157 shows a pattern consistent with low technical variation:
+
+    -   All SDs are very close to 0 until PC1013, where the replicates begin to split.
+    -   Between, PC1013 and PC1102, there are several Groups with SDs between 0 and 1.
+    -   After PC1102, the within-Group SDs decrease sharply, but still reflect modest variation in some Groups.
+
+```{r rep_splits_overall, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE, results= 'asis'}
+
+pc_cols <- paste0("PC", 1:2157) 
+
+replicate_spreads <- calculate_replicate_spread(
+  plot_data, 
+  rep_col = "REP", 
+  pc_cols = pc_cols,
+  cache_file = "rep_spreads_hold.rds"
+)
+
+spreads_long <- replicate_spreads %>%
+  select(Replicate, Rep_Type, N_samples, ends_with("_sd")) %>%
+  pivot_longer(cols = ends_with("_sd"), 
+               names_to = "PC", 
+               values_to = "SD") %>%
+  mutate(PC = gsub("_sd", "", PC),
+         PC_num = as.numeric(gsub("PC", "", PC)))
+
+pct <- 0.90
+spreads_long <- spreads_long %>%
+  group_by(PC) %>%
+  mutate(pcut = quantile(SD, pct, na.rm = TRUE),
+         Top = SD > pcut) %>%
+  ungroup()
+
+plot_pc_range(spreads_long, pc_min = 1, pc_max = 2157)
+```
+
+-   **Only 95 of the 1013 Groups have SD \>0** (84 Pairs, 9 Trios, 2 Quads), implying that that majority of Groups (\>90%) have no within-Group variation at all among the genetic variants used in PCA.
+-   These 95 variable Groups are the ones that we see with large SDs between PC1013 and PC1102.
+-   Among the variable Groups, three Pairs and a set of six other Groups have perfectly correlated SDs over all PCs, and a few others have very high correlation.
+
+```{r rep_var, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE, results= 'asis'}
+variable_reps <- find_variable_replicates(replicate_spreads, threshold = 0)
+
+high_corr_pairs <- correlate_variable_reps(
+  replicate_spreads = replicate_spreads,
+  variable_reps = variable_reps,
+  corr_threshold = 0.90   
+)
+```
+
+## C.2 PC1005-PC1125
+
+-   The next series of plots show more detail in the middle region where the replicate splits are most pronounced.
+-   Following the first plot, we show a list of the individuals within Groups with top SDs for each of the PCs. We do not list these for all plots as the patterns are similar.
+    -   The first Group to split in this region is **Quad1** at PC1013 with an SD=0.5767. The table shows the four `Cohort_Sites` for the samples making up this Group, the sequencing `Round`, the `SD` for the Group for this PC and the `Values` of the components of the eigenvector for each sample.
+        -   The PC splits one sample of Quad1 from the other three: three samples have the same PC Value (-0.2875) and one different (0.8559). This reflects genetic variation nearly perfectly splitting the one different sample from the other three.
+    -   The next Group to split is **Pair691** at PC1014, with loadings (0.7055, -0.7035) almost symmetric around 0, resulting in an SD of almost 1.
+    -   The next Group to split is **Trio11** at PC1015, with SD=0.70673.
+        -   Similar to **Quad1**, this PC splits one sample (-0.4072) from two samples with the same PC loading (0.8169).
+    -   Continuing down the table, we see Reps continue to split with PC loadings nearly symmetric around 0.
+    -   The five additional Trios in the table show a pattern similar to **Trio11**, except for **Trio9**, which has three distinct loadings for the three samples (-0.7787, 0.2588, 0.5196) for PC1036.
+    -   **Quad3** (the only other Quad in the table), has a different pattern from **Quad1**; PC1041 splits two of the samples with loadings of (-0.635, 0.7603) and places the other pair, both with the same loading, in between (-0.0626).
+
+```{r rep_splits_middle, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+plot_pc_range(spreads_long, pc_min = 1005, pc_max = 1045)
+print_high_sd_reps(spreads_long, plot_data, pc_min = 1005, pc_max = 1045, sd_threshold = 0.5)
+
+plot_pc_range(spreads_long, pc_min = 1045, pc_max = 1085)
+#print_high_sd_reps(spreads_long, plot_data, pc_min = 1045, pc_max = 1085, sd_threshold = 0.75)
+
+plot_pc_range(spreads_long, pc_min = 1085, pc_max = 1125)
+#print_high_sd_reps(spreads_long, plot_data, pc_min = 1085, pc_max = 1125, sd_threshold = 0.75)
+#I would like to see, of the Trios and Quad that include r1, how often is that the outlier across the region.
+```
+
+```{r rep_splits_end, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE,results='asis',eval=FALSE}
+plot_pc_range(spreads_long, pc_min = 2117, pc_max = 2157)
+print_high_sd_reps(spreads_long, plot_data, pc_min = 2117, pc_max = 2157, sd_threshold = 0.05)
+```
+
+## C.3 PC1-PC40
+
+-   Here we see within-Group SDs for the first 40 PCs:
+
+    -   Notice the scale on the y-axis places all of these values very close to 0.
+    -   These are the PCs that we expect to explain the most variation among the whole sample set. The fact that all of the within-Group SDs for these PCs are very close to 0 shows that the variation explained by these PCs is due to between-Group differences (explored further in the next section).
+    -   It is interesting to note the few Groups that show the largest SDs in this set (see table below plot), as they do become visible in the PC plots in Section D.
+        -   **Pair691, Quad1, Pair626, Pair450** and **Pair207**.
+
+```{r rep_splits_front, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE,results='asis'}
+plot_pc_range(spreads_long, pc_min = 1, pc_max = 40)
+print_high_sd_reps(spreads_long, plot_data, pc_min = 1, pc_max = 40, sd_threshold = 2.7e-4)
+```
+
+# D. Eigenvectors
+
+```{r setup_plotting_functions, message=FALSE, warning=FALSE, echo=TRUE}
+library(ggplot2)
+library(kableExtra)
+
+# Function to plot PCs
+plot_pcs <- function(df, pc_x, pc_y, color_by, shape_by = NULL,
+                     color_title = NULL, shape_title = NULL,
+                     var_explained = NULL, clusters = NULL) {
+  
+  if (is.null(color_title)) color_title <- color_by
+  if (is.null(shape_title)) shape_title <- shape_by
+  
+  x_label <- pc_x
+  y_label <- pc_y
+  if (!is.null(var_explained)) {
+    pc_x_num <- as.numeric(gsub("PC", "", pc_x))
+    pc_y_num <- as.numeric(gsub("PC", "", pc_y))
+    x_label <- paste0(pc_x, " (", round(var_explained[pc_x_num], 2), "%)")
+    y_label <- paste0(pc_y, " (", round(var_explained[pc_y_num], 2), "%)")
+  }
+  
+  plot_data <- df
+  if (!is.null(clusters)) {
+    plot_data$cluster <- "Unclustered"
+    cluster_names <- names(clusters)
+    if (is.null(cluster_names)) {
+      cluster_names <- paste0("Cluster", seq_along(clusters))
+    }
+    
+    for (i in seq_along(clusters)) {
+      x_range <- clusters[[i]]$x_range
+      y_range <- clusters[[i]]$y_range
+      
+      in_cluster <- plot_data[[pc_x]] >= x_range[1] & 
+                    plot_data[[pc_x]] <= x_range[2] &
+                    plot_data[[pc_y]] >= y_range[1] & 
+                    plot_data[[pc_y]] <= y_range[2]
+      
+      plot_data$cluster[in_cluster] <- cluster_names[i]
+    }
+    plot_data$cluster <- factor(plot_data$cluster, 
+                                levels = c("Unclustered", cluster_names))
+    color_by <- "cluster"
+    color_title <- "Cluster"
+  }
+  
+  p <- ggplot(plot_data, aes(x = .data[[pc_x]], y = .data[[pc_y]], 
+                              color = .data[[color_by]]))
+  
+  if (!is.null(shape_by)) {
+    p <- p + geom_point(aes(shape = .data[[shape_by]]), size = 1.5, stroke = 0.5)
+    p <- p + scale_shape_manual(values = c(1, 2, 0, 5, 6), na.value = 4)
+  } else {
+    p <- p + geom_point(size = 1.5, stroke = 0.5, shape = 1)
+  }
+  
+  if (!is.null(clusters)) {
+    p <- p + scale_color_manual(
+      values = c("Unclustered" = "grey80", 
+                 setNames(scales::hue_pal()(length(cluster_names)), cluster_names)),
+      breaks = cluster_names
+    )
+  }
+  
+  p <- p + 
+    labs(x = x_label, y = y_label, color = color_title, shape = shape_title) +
+    theme_minimal()
+  
+  return(p)
+}
+
+# Function to print points
+print_points <- function(df, pc_x, pc_y, x_range = NULL, y_range = NULL, n = 5) {
+  
+  if (is.null(x_range) && is.null(y_range)) {
+    x_high_idx <- order(df[[pc_x]], decreasing = TRUE)[1:n]
+    x_low_idx <- order(df[[pc_x]], decreasing = FALSE)[1:n]
+    y_high_idx <- order(df[[pc_y]], decreasing = TRUE)[1:n]
+    y_low_idx <- order(df[[pc_y]], decreasing = FALSE)[1:n]
+    
+    cat("**Highest", n, "on", pc_x, ":**\n\n")
+    print(knitr::kable(df[x_high_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                         "Ethnicity", pc_x, pc_y)] %>%
+                         arrange(desc(.data[[pc_x]]), desc(.data[[pc_y]])),
+                       row.names = FALSE))
+    
+    cat("\n**Lowest", n, "on", pc_x, ":**\n\n")
+    print(knitr::kable(df[x_low_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                        "Ethnicity", pc_x, pc_y)] %>%
+                         arrange(.data[[pc_x]], desc(.data[[pc_y]])),
+                       row.names = FALSE))
+    
+    cat("\n**Highest", n, "on", pc_y, ":**\n\n")
+    print(knitr::kable(df[y_high_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                         "Ethnicity", pc_x, pc_y)] %>%
+                         arrange(desc(.data[[pc_y]]), desc(.data[[pc_x]])),
+                       row.names = FALSE))
+    
+    cat("\n**Lowest", n, "on", pc_y, ":**\n\n")
+    print(knitr::kable(df[y_low_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                        "Ethnicity", pc_x, pc_y)] %>%
+                         arrange(.data[[pc_y]], desc(.data[[pc_x]])),
+                       row.names = FALSE))
+    
+    extreme_idx <- unique(c(x_high_idx, x_low_idx, y_high_idx, y_low_idx))
+    extreme_points <- df[extreme_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                         "Ethnicity", pc_x, pc_y)]
+    
+    return(invisible(extreme_points))
+    
+  } else {
+    x_in_range <- rep(TRUE, nrow(df))
+    y_in_range <- rep(TRUE, nrow(df))
+    
+    if (!is.null(x_range)) {
+      x_in_range <- df[[pc_x]] >= x_range[1] & df[[pc_x]] <= x_range[2]
+    }
+    
+    if (!is.null(y_range)) {
+      y_in_range <- df[[pc_y]] >= y_range[1] & df[[pc_y]] <= y_range[2]
+    }
+    
+    in_range_idx <- which(x_in_range & y_in_range)
+    
+    points_in_range <- df[in_range_idx, c("ID", "REP", "Cohort_Site", "Round", "Race", 
+                                            "Ethnicity", pc_x, pc_y)] %>%
+      arrange(.data[[pc_x]], .data[[pc_y]])
+    
+    if (nrow(points_in_range) > 0) {
+      print(knitr::kable(points_in_range, row.names = FALSE))
+    } else {
+      cat("No points found in the specified range.\n\n")
+    }
+    
+    return(invisible(points_in_range))
+  }
+}
+```
+
+## D.1 First 25 PCs
+
+### D.1.1 PC1 vs PC2
+
+-   The first plot shows that PC1 and PC2 separate samples by Race and Ethnicity:
+
+    -   PC1 splits Asian groups from others, with Native American, Hispanic White and Hispanic Asian groups trending toward the Asian cluster.
+
+    -   PC2 shows a gradient from Black to Non-Hispanic White, with Hispanic, Native American and Asian groups falling between.
+
+-   The second plot shows the Asian cluster is made up of KBASE-GARD pairs. Note that, Cohort_Site groups with fewer than 76 samples were collapsed into the "Other" group.
+
+```{r pc_plots_12, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+plot_pcs(plot_data, "PC1", "PC2", color_by = "Race", shape_by = "Ethnicity", 
+         var_explained = var_explained)
+
+plot_pcs(plot_data, "PC1", "PC2", color_by = "Cohort_Site_collapsed", 
+         var_explained = var_explained)
+```
+
+### D.1.2 PC2 vs PC3
+
+-   The following plot shows that PC2 and PC3 also separate samples by Race and Ethnicity:
+
+    -   We see more clearly, three non-Hispanic groups (Black, Asian and White) separating along the PC2 axis.
+    -   PC3 separates Native Americans from the others in a gradient including Hispanic groups.
+
+```{r pc_plots_23, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+plot_pcs(plot_data, "PC2", "PC3", color_by = "Race", shape_by = "Ethnicity", 
+         var_explained = var_explained)
+```
+
+### D.1.3 PC4 vs PC5
+
+-   The amount of variation explained decreases by more than half following PC3.
+
+-   PC4 separates the data into 4 apparently distinct clusters and PC5 further splits two smaller groups from the others.
+
+-   Looking at the first plot below, race and ethnicity (as captured by the NIH categories) does not seem to explain the differences between the clusters. All individuals in outlying clusters report as non-Hispanic white.
+
+-   We define five outlying clusters shown in the second plot below. Details of the samples within the clusters are in the tables that follow. Note that at this point in the ordered PCs, the loadings for the replicates are so similar, we cannot distinguish the multiple overlapping points. We demonstrated this by showing the very small within-Group SDs for early PCs in section C.3.
+
+    -   **Cluster 1** includes one Trio and four Pairs (**Pair16, Pair17, Pair18, Pair873 and Trio48**). All are from MIA/NIA-LOAD. We verified that these five groups include replicates of [five family members]{.underline} (GP 26057).
+
+    -   **Cluster 2** includes three Pairs (**Pair342, Pair553, Pair563**). All are from ADC-Mayo/NIA-LOAD. Among the different pairs pi_hat \\(\\approx\\) 0.62, [consistent with being family members]{.underline}.
+
+    -   **Cluster 3** includes one Trio and two Pairs (**Trio33, Pair566 and Pair629**). All are from ADC-UPitt/A4/ADNI. Pair566 and Trio33 have pi_hat \\(\\approx\\) 0.57 between the groups, while Pair629 has a pi-hat \\(\\approx\\) 0.40 between Trio33 and Pair566. [All are consistent with being family members]{.underline}.
+
+    -   **Cluster 4** includes five Trios and one Pair (Trio4, Trio5, Trio54, Trio100, Trio109 and Pair524). Two of the trios were in the 36k PCA replicate analysis and we speculated that they may be Askenazi Jewish. No groups have pi-hat \>0.5 between them.
+
+    -   **Cluster 5** includes 38 Pairs. Almost half are from KGAD/ADC-WashU. See the table below. No groups have pi-hat \>0.4 between them.
+
+```{r pc_plots_45, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+plot_pcs(plot_data, "PC4", "PC5", color_by = "Race", shape_by = "Ethnicity", 
+         var_explained = var_explained)
+
+#36k:Pair1071,Pair1070 and Pair4 were early outliers in the 36k
+#36k: Pair2, Pair1076 and Pair1077 also. But I don't see this as early outliers (yet).
+#Note when comparing to the 36k, we only did PCA this time for replicates that contain at least one r5 sample. So only our Trios or Quads may be in the 36k.
+
+# Define clusters
+my_clusters <- list(
+  list(x_range = c(0.05, 0.075), y_range = c(0.2, 0.255)),
+  list(x_range = c(0.05, 0.075), y_range = c(-0.02, 0)),
+  list(x_range = c(-0.025, 0), y_range = c(-0.25, -0.19)),
+  list(x_range = c(-0.15, -0.095), y_range = c(0, 0.05)), 
+  list(x_range = c(-0.095, -0.05), y_range = c(0, 0.05))
+)
+
+plot_pcs(plot_data, "PC4", "PC5", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+# Cluster 1
+cat("\n#### Cluster 1\n")
+print_points(plot_data, "PC4", "PC5", x_range = c(0.05, 0.075), y_range = c(0.2, 0.255))
+#Trio48 was 36k:Pair1072. The others in Cluster 1 are new pairs. Check if related.
+
+# Cluster 2
+cat("\n#### Cluster 2\n")
+print_points(plot_data, "PC4", "PC5", x_range = c(0.05, 0.075), y_range = c(-0.02, 0))
+#All new pairs.
+
+# Cluster 3
+cat("\n#### Cluster 3\n")
+print_points(plot_data, "PC4", "PC5", x_range = c(-0.025, 0), y_range = c(-0.25, -0.19))
+#Trio33 was 36k:Pair675
+
+# Cluster 4
+cat("\n#### Cluster 4\n")
+print_points(plot_data, "PC4", "PC5", x_range = c(-0.15, -0.095), y_range = c(0, 0.05))
+#five trios and a Pair: Trio100 was 36k: Pair8, Trio5 was 36k:Pair285, Trio10 was 36k:Pair18. The others are new.
+#36k:Pair8 and Pair18 were among the outliers on the previous PC4, which we thought may be AJ.
+
+# Cluster 5
+cat("\n#### Cluster 5\n")
+print_points(plot_data, "PC4", "PC5", x_range = c(-0.095, -0.05), y_range = c(0, 0.05))
+#All new pairs.
+```
+
+### D.1.4 PC6 vs PC7
+
+-   Here we also define five outlying clusters shown in the plot below:
+
+    -   **Cluster 1**, **Cluster 2** and **Cluster 3** are the same respective family clusters defined for PC4 vs. PC5.
+
+    -   **Cluster 6** is a new cluster including three quads (**Quad3, Quad6 and Quad8**). All are from ADC/EFIGA/WHICAP). It appears they all have pi-hat\<0.4 between them, but they [could be extended family members]{.underline}.
+
+    -   **Quad4** is separated individually.
+
+```{r pc_plots_67, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+# Define clusters
+my_clusters <- list(
+  "Cluster1" = list(x_range = c(0.1, 0.2), y_range = c(0, 0.05)),
+  "Cluster2" = list(x_range = c(-0.05, 0.05), y_range = c(-0.38, -0.3)),
+  "Cluster3" = list(x_range = c(0.25, 0.35), y_range = c(0, 0.05)),
+  "Cluster6" = list(x_range = c(-0.05, 0.05), y_range = c(-0.11, -0.04)), 
+  "Quad4" = list(x_range = c(-0.06, -0.05), y_range = c(0.1, 0.15))
+)
+
+plot_pcs(plot_data, "PC6", "PC7", var_explained = var_explained, color_by = "Race", 
+         clusters = my_clusters)
+
+for (i in 4:5) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC6", "PC7", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+```
+
+### D.1.5 PC8 vs PC9
+
+-   Here we see seven outlying groups, three Quads, Cluster 3 from above and three new clusters:
+
+    -   **Quad4** is an individual outlier, as in the previous plot.
+
+    -   **Quad3** and **Quad 8** are split out individually from Cluster 6, shown previously.
+
+    -   **Cluster 3** is the same cluster as in previous plots.
+
+    -   **Cluster 7** includes **Quad6** (also from Cluster 6 above) and **Trio62**, both from ADC/WHICAP. Like Cluster 6, the pi-hat\<0.4 between them, but they [could be extended family members]{.underline}.
+
+    -   **Cluster 8** includes **Pair167** and **Trio21**. The pi-hat between the two is 0.525, [consistent with being family members]{.underline}.
+
+    -   **Cluster 9** includes **Pair743** and **Trio99**. The pi-hat between the two is 0.534, [consistent with being family members]{.underline}.
+
+```{r pc_plots_89, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+# Define clusters
+my_clusters <- list(
+  "Quad4" = list(x_range = c(0.25, 0.3), y_range = c(0.25, 0.3)),
+  "Quad3" = list(x_range = c(-0.3, -0.25), y_range = c(0.25, 0.3)),
+  "Quad8" = list(x_range = c(-0.16, -0.14), y_range = c(0.1, 0.12)),
+  "Cluster3" = list(x_range = c(0.1, 0.15), y_range = c(-0.05, 0)),
+  "Cluster7" = list(x_range = c(-0.1, -0.04), y_range = c(-0.07, -0.02)),
+  "Cluster8" = list(x_range = c(0.05, 0.12), y_range = c(0.05, 0.1)), 
+  "Cluster9" = list(x_range = c(0, 0.05), y_range = c(-0.15, -0.1))
+)
+
+plot_pcs(plot_data, "PC8", "PC9", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+for (i in c(2, 3, 5, 6, 7)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC8", "PC9", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+```
+
+### D.1.6 PC10 vs PC11
+
+-   Here we see six outlying groups, four Quads and two new clusters:
+
+    -   **Quad3**, **Quad4**, **Quad 8**, and now **Quad6** are split out individually for PC8 and PC9.
+
+    -   **Cluster 8** is the same as in the previous plot (**Pair167** and **Trio21**).
+
+    -   **Cluster 9** is the same as in the previous plot (**Pair743** and **Trio99**).
+
+```{r pc_plots_1011, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+# Define clusters
+my_clusters <- list(
+  "Quad3" = list(x_range = c(0.05, 0.055), y_range = c(0.17, 0.175)),
+  "Quad4" = list(x_range = c(-0.155, -0.15), y_range = c(0.06, 0.062)),
+  "Quad8" = list(x_range = c(-0.24, -0.23), y_range = c(-0.345, -0.34)),
+  "Quad6" = list(x_range = c(-0.2, -0.15), y_range = c(0.15, 0.2)), 
+  "Cluster1" = list(x_range = c(0.15, 0.25), y_range = c(-0.2, -0.1)), 
+  "Cluster2" = list(x_range = c(-0.25, -0.16), y_range = c(0, 0.05))
+)
+
+plot_pcs(plot_data, "PC10", "PC11", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+i <- 4 # Just show Quad6
+cat("\n####", names(my_clusters[i]), "\n")
+print_points(plot_data, "PC10", "PC11", 
+             as.numeric(unlist(my_clusters[[i]][1])), 
+             as.numeric(unlist(my_clusters[[i]][2])))
+```
+
+### D.1.7 PC12 vs PC13
+
+-   Here we see previous clusters split and more Quads split out individually.
+
+    -   **Quad3**, **Quad6**, **Quad8**, and now **Quad2** and **Quad7** are split out individually.
+
+    -   **Cluster 2** from above (**Pair342, Pair553, Pair563)** remains tightly grouped.
+
+    -   Previous **Cluster 8** and **Cluster 9** are being separated with these PCs.
+
+```{r pc_plots_1213, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+# Define clusters
+my_clusters <- list(
+  "Quad2" = list(x_range = c(0.05, 0.08), y_range = c(-0.06, -0.05)),
+  "Quad3" = list(x_range = c(-0.15, -0.1), y_range = c(-0.05, -0.02)),
+  "Quad6" = list(x_range = c(0, 0.08), y_range = c(0.36, 0.362)),
+  "Quad7" = list(x_range = c(0.12, 0.13), y_range = c(0, 0.01)),
+  "Quad8" = list(x_range = c(0.05, 0.1), y_range = c(0, 0.05)),
+  "Cluster 2" = list(x_range = c(0, 0.05), y_range = c(-0.06, -0.05)),
+  "Cluster 8" = list(x_range = c(-0.21, -0.25), y_range = c(0.15, 0.25)), 
+  "Cluster 9" = list(x_range = c(-0.331, -0.25), y_range = c(-0.1, 0))
+)
+
+plot_pcs(plot_data, "PC12", "PC13", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+for (i in c(1, 4)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC12", "PC13", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+```
+
+### D.1.8 PC14 - PC25
+
+-   For the next several PCs, we continue to see all Quads split out individually.
+
+-   We also see some new clusters (**Clusters 10, 11 and 12**)
+
+    -   **Cluster 10** consists of **Trio25** and **Pair562**. The pi-hat between the two groups is 0.586, [consistent with them being related]{.underline}.
+
+    -   **Cluster 11** consists of **Pair872** and **Pair86**. The pi-hat between the two groups is 0.527, [consistent with them being related]{.underline}.
+
+    -   **Cluster 12** consists of **Pair283, Pair277** and **Pair329**. The pi-hat between **Pair283** and **Pair277** is 0.46, while the pi-hat between **Pair283** and **Pair329** is 0.534, [consistent with them being related]{.underline}. Interestingly it appears that pi-hat between **Pair277** and **Pair329** is \<0.4.
+
+-   Notice that **Quad1**, is the first replicate set that we have seen split out that does not have identical loadings for all replicates. We saw this reflected in section C.3, where the SD for **Quad1** increases for PC15. NOte that the deviating sample is from r1 (see Table below).
+
+-   After PC19, we start to see Trios split out individually and no clustering outliers.
+
+```{r pc_plots_1415, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+# Define clusters PC14 vs PC15
+my_clusters <- list(
+  "Quad1" = list(x_range = c(0.155, 0.2), y_range = c(-0.25, -0.2)),
+  "Quad2" = list(x_range = c(-0.15, -0.1), y_range = c(0.25, 0.3)),
+  "Quad7" = list(x_range = c(-0.36, -0.32), y_range = c(-0.25, -0.2)),
+  "Cluster2" = list(x_range = c(-0.15, -0.05), y_range = c(-0.01, 0.05))
+)
+
+plot_pcs(plot_data, "PC14", "PC15", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+i <- 1 # Just show Quad1
+cat("\n####", names(my_clusters[i]), "\n")
+print_points(plot_data, "PC14", "PC15", 
+             as.numeric(unlist(my_clusters[[i]][1])), 
+             as.numeric(unlist(my_clusters[[i]][2])))
+
+# Define clusters PC16 vs PC17
+my_clusters <- list(
+  "Quad1" = list(x_range = c(0.08, 0.09), y_range = c(0.29, 0.3)),
+  "Quad2" = list(x_range = c(0.02, 0.03), y_range = c(0.28, 0.9)),
+  "Quad5" = list(x_range = c(0.4, 0.45), y_range = c(-0.1, -0.07)),
+  "Cluster10" = list(x_range = c(-0.1, -0.05), y_range = c(-0.05, 0)),
+  "Cluster11" = list(x_range = c(-0.05, 0), y_range = c(-0.1, -0.055))
+)
+
+plot_pcs(plot_data, "PC16", "PC17", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+for (i in c(3, 4, 5)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC16", "PC17", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+
+# Define clusters PC18 vs PC19
+my_clusters <- list(
+  "Cluster 10" = list(x_range = c(0.15, 0.2), y_range = c(-0.2, -0.14)),
+  "Cluster 11" = list(x_range = c(-0.35, -0.25), y_range = c(-0.1, 0)),
+  "Cluster 12" = list(x_range = c(0, 0.05), y_range = c(0.2, 0.26)),
+  "Pair596" = list(x_range = c(-0.21, -0.19), y_range = c(-0.05, 0))
+)
+
+plot_pcs(plot_data, "PC18", "PC19", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+for (i in c(3, 4)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC18", "PC19", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+
+# Define clusters PC20 vs PC21
+my_clusters <- list(
+  "Cluster 10" = list(x_range = c(0.075, 0.12), y_range = c(0.15, 0.22)),
+  "Cluster 11" = list(x_range = c(-0.025, 0), y_range = c(0.15, 2)),
+  "Cluster 12" = list(x_range = c(-0.075, -0.05), y_range = c(0.1, 0.15))
+)
+
+plot_pcs(plot_data, "PC20", "PC21", color_by = "Race", var_explained = var_explained, 
+         clusters = my_clusters)
+
+# for (i in c(1, 2, 3)) {
+#   cat("\n####", names(my_clusters[i]), "\n")
+#   print_points(plot_data, "PC20", "PC21", 
+#                as.numeric(unlist(my_clusters[[i]][1])), 
+#                as.numeric(unlist(my_clusters[[i]][2])))
+# }
+
+#PC22 is splitting apart the family in Cluster 1
+#PC20-PC22 pulling apart Cluster 4 (where did I see Trio 100 and Pair524?)
+#After PC23, it is all outlying Trios, then it will be pairs.
+
+# Test next set of PCs
+# print_points(plot_data, "PC20", "PC21", n = 20)
+ plot_pcs(plot_data, "PC22", "PC23", color_by = "Race", var_explained = var_explained)
+# print_points(plot_data, "PC22", "PC23", n = 20)
+ plot_pcs(plot_data, "PC24", "PC25", color_by = "Race", var_explained = var_explained)
+# print_points(plot_data, "PC24", "PC25", n = 20)
+```
+
+## D.2 PCs at Replicate Split
+
+-   Here we look at plots of PCs around the Replicate Split, which occurs at PC1013.
+
+    -   As shown in Section C.2, PC1013 is the first PC where we see loadings substantially diverge within a Group.
+
+-   We show a couple of plots as examples below. Similar information is contained for all of the PCs in the middle region in the tables in Section C.2.
+
+### D.2.1 PC1012 vs. PC1013
+
+```{r pc_plots_10121017, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+
+# Define clusters
+my_clusters <- list(
+  "Pair690" = list(x_range = c(0.48, 0.5), y_range = c(-0.06, 0)),
+  "Pair665" = list(x_range = c(-0.49, -0.48), y_range = c(0, 0.02)),
+  "Quad1_1" = list(x_range = c(-0.1, 0.1), y_range = c(0.865, 0.87)),
+  "Quad1_2" = list(x_range = c(-0.1, 0.1), y_range = c(-0.3, -0.28))
+)
+
+plot_pcs(plot_data, "PC1012", "PC1013", color_by = "Race", var_explained = var_explained, 
+       clusters = my_clusters)
+
+for (i in seq(1,4)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC1012", "PC1013", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+
+```
+
+### D.2.2 PC1014 vs. PC1015
+
+```{r pc_plots_1014, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
+
+# Define clusters
+my_clusters <- list(
+  "Pair691_1" = list(x_range = c(0.7, 0.75), y_range = c(-0.06, 0)),
+  "Pair691_2" = list(x_range = c(-0.75, -0.70), y_range = c(0, 0.02)),
+  "Trio11_1" = list(x_range = c(0, 0.1), y_range = c(0.8, 0.82)),
+  "Trio11_2" = list(x_range = c(-0.1, 0.1), y_range = c(-0.50, -0.3))
+)
+
+plot_pcs(plot_data, "PC1014", "PC1015", color_by = "Race", var_explained = var_explained, 
+       clusters = my_clusters)
+
+for (i in seq(1,4)) {
+  cat("\n####", names(my_clusters[i]), "\n")
+  print_points(plot_data, "PC1014", "PC1015", 
+               as.numeric(unlist(my_clusters[[i]][1])), 
+               as.numeric(unlist(my_clusters[[i]][2])))
+}
+
+# plot_pcs(plot_data, "PC1016", "PC1017", color_by = "Cohort_Site_collapsed",  
+#          var_explained = var_explained)
+# 
+# print_points(plot_data, "PC1016", "PC1017", n = 4)
+```
+
+# E. Summary
+
+**Key Findings:**
+
+-   **Variance Explained**: The first 3 PCs explain the majority of variance and primarily capture race and ethnicity differences among samples. Variance drops rapidly after PC3, with individual PCs explaining progressively smaller amounts.
+
+-   **Technical Replication Quality**: Within-group standard deviations remain near zero through PC1012, indicating excellent technical replication. Replicate splits begin at PC1013 (matching the expected threshold of Groups - 1), with modest variation appearing between PC1013-PC1101, then decreasing sharply.
+
+-   **Population Structure**: PC1 and PC2 separate samples by race and ethnicity, with PC1 distinguishing Asian ancestry and PC2 showing a gradient from Black to White populations. PC3 further separates Native American ancestry.
+
+-   **Family Structure**: PCs 4-25 reveal multiple family clusters and related individuals, with higher PCs progressively resolving finer levels of relatedness. All quads separate individually by PC14, followed by trios and eventually pairs in higher PCs.
+
+-   **Quality Control**: The pattern of replicate splits is consistent with low technical variation and high-quality sequencing across rounds. Identified clusters include potential family units and populations with specific ancestry patterns (e.g., possible Ashkenazi Jewish ancestry in Cluster 4).
