@@ -273,14 +273,14 @@ cat("\n")
 **Detailed Replicate Group Information:** This section shows the technical covariates for each replicate group. Technical replicates from the same individual have been processed at different sequencing centers, in different rounds, or with different library preparation methods (PCR-free vs PCR-amplified).
 
 -   TECH1, TECH2 and TECH3 are the first replicate groups that were used in the initial ADSP-Discovery sequencing studies. They include replicate samples both PCR-free and PCR-amplified preps in r1 and they were carried forward throughout subsequent sequencing rounds.
-  -   The three unique samples are from the same family (TECH1 = mother, TECH2 and TECH3 = full sibling offspring of TECH1)
-  -   TECH3 is missing the replicate sample in the LASI-DAD study.
+-   The three unique samples are from the same family (TECH1 = mother, TECH2 and TECH3 = full sibling offspring of TECH1)
+-   TECH3 is missing the replicate sample in the LASI-DAD study.
 -   TECH4, TECH5 and TECH6 were introduced in the ADSP-Extension studies and have dropped the three PCR-Amplified samples from r1. They were also carried forward in subsequent sequencing rounds.
-  -   TECH5 is missing the replicate samples from LASI-DAD and GARD1.
-- Based on reported NIH Race and Ethnicity categories:
-  - TECH1, TECH2, TECH3 and TECH4 are Hispanic
-  - TECH5 is Non-Hispanic white
-  - TECH6 is Non-Hispanic black
+-   TECH5 is missing the replicate samples from LASI-DAD and GARD1.
+-   Based on reported NIH Race and Ethnicity categories:
+    -   TECH1, TECH2, TECH3 and TECH4 are Hispanic
+    -   TECH5 is Non-Hispanic white
+    -   TECH6 is Non-Hispanic black
 
 ```{r replicate_details, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
 # Merge replicate data with covariates
@@ -737,7 +737,6 @@ plot_pc_range(spreads_long, pc_min = late_pcs_range[1], pc_max = late_pc_end)
 print_high_sd_reps(spreads_long, plot_data, pc_min = late_pcs_range[1], pc_max = late_pc_end,
                    sd_threshold = sd_threshold_late_pcs)
 ```
-
 
 **Interpretation:** This section identifies technical replicates with high standard deviations across different PC ranges, indicating potential technical issues. Replicates showing very low SDs in early PCs (C.2), suggesting biological differences contribute the most to differences. The replicate split region (C.3) shows where technical variation begins to dominate, occuring after PC`r n_groups - 1`.
 
