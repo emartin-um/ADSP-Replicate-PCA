@@ -182,7 +182,7 @@ ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
 
 -   We expect that any variation among samples within Groups will be reflected in later PCs.
 
--   The PC at which the replicates start to have large SDs is an imprtant QC metric. Ideally, we expect this point of "Replicate Split" to occur after the PC for the number of Groups minus 1 (PC1012 for this example).
+-   The PC at which the replicates start to have large SDs is an important QC metric. Ideally, we expect this point of "Replicate Split" to occur after the PC for the number of Groups minus 1 (PC1012 for this example).
 
     ```{r setup_replicate_functions, message=FALSE, warning=FALSE, echo=TRUE, results= 'asis'}
     library(tidyr)
@@ -349,29 +349,33 @@ ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
         )
       
       cat("\n**Replicates with SD >", sd_threshold, "for PC", pc_min, "-", pc_max, ":**\n\n")
+      cat("<details>\n<summary>Click to expand table (", nrow(summary_table), " rows)</summary>\n\n", sep = "")
       print(knitr::kable(summary_table, row.names = FALSE, digits = 5))
-      
+      cat("\n</details>\n\n")
+
       return(invisible(summary_table))
     }
 
     # Function to find replicates with any non-zero SD
     find_variable_replicates <- function(replicate_spreads, threshold = 0) {
-      
+
       # Get all SD columns
       sd_cols <- grep("_sd$", names(replicate_spreads), value = TRUE)
-      
+
       # Find replicates with any SD > threshold
       variable_reps <- replicate_spreads %>%
         mutate(max_sd = pmax(!!!syms(sd_cols))) %>%
         filter(max_sd > threshold) %>%
         select(Replicate, max_sd) %>%
         arrange(desc(max_sd))
-      
+
       cat("\n**Replicate groups with SD >", threshold, ":**\n\n")
       cat("Total:", nrow(variable_reps), "out of", nrow(replicate_spreads), "groups\n\n")
-      
+
+      cat("<details>\n<summary>Click to expand table (", nrow(variable_reps), " rows)</summary>\n\n", sep = "")
       print(knitr::kable(variable_reps, row.names = FALSE, digits = 4))
-      
+      cat("\n</details>\n\n")
+
       return(invisible(variable_reps))
     }
 
@@ -414,12 +418,13 @@ ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
       
       # Print results
       cat("\n**Pairwise correlations of SD profiles (|r| >=", corr_threshold, "):**\n\n")
-      
+
       if (nrow(cor_pairs) == 0) {
         cat("No replicate pairs above threshold.\n\n")
         return(invisible(NULL))
       }
-      
+
+      cat("<details>\n<summary>Click to expand table (", nrow(cor_pairs), " rows)</summary>\n\n", sep = "")
       print(
         knitr::kable(
           cor_pairs,
@@ -427,7 +432,8 @@ ggplot(scree_data, aes(x = Component, y = Eigenvalue)) +
           digits = 4
         )
       )
-      
+      cat("\n</details>\n\n")
+
       return(invisible(cor_pairs))
     }
 
@@ -627,7 +633,7 @@ plot_pcs <- function(df, pc_x, pc_y, color_by, shape_by = NULL,
 }
 
 # Function to print points
-print_points <- function(df, pc_x, pc_y, x_range = NULL, y_range = NULL, n = 5) {
+print_points <- function(df, pc_x, pc_y, x_range = NULL, y_range = NULL, n = 5, collapse_threshold = 20) {
   
   if (is.null(x_range) && is.null(y_range)) {
     x_high_idx <- order(df[[pc_x]], decreasing = TRUE)[1:n]
@@ -684,11 +690,17 @@ print_points <- function(df, pc_x, pc_y, x_range = NULL, y_range = NULL, n = 5) 
       arrange(.data[[pc_x]], .data[[pc_y]])
     
     if (nrow(points_in_range) > 0) {
-      print(knitr::kable(points_in_range, row.names = FALSE))
+      if (nrow(points_in_range) > collapse_threshold) {
+        cat("<details>\n<summary>Click to expand table (", nrow(points_in_range), " rows)</summary>\n\n", sep = "")
+        print(knitr::kable(points_in_range, row.names = FALSE))
+        cat("\n</details>\n\n")
+      } else {
+        print(knitr::kable(points_in_range, row.names = FALSE))
+      }
     } else {
       cat("No points found in the specified range.\n\n")
     }
-    
+
     return(invisible(points_in_range))
   }
 }
@@ -736,11 +748,11 @@ plot_pcs(plot_data, "PC2", "PC3", color_by = "Race", shape_by = "Ethnicity",
 
 -   We define five outlying clusters shown in the second plot below. Details of the samples within the clusters are in the tables that follow. Note that at this point in the ordered PCs, the loadings for the replicates are so similar, we cannot distinguish the multiple overlapping points. We demonstrated this by showing the very small within-Group SDs for early PCs in section C.3.
 
-    -   **Cluster 1** includes one Trio and four Pairs (**Pair16, Pair17, Pair18, Pair873 and Trio48**). All are from MIA/NIA-LOAD. We verified that these five groups include replicates of [five family members]{.underline} (GP 26057).
+    -   **Cluster 1** includes one Trio and four Pairs (**Pair16, Pair17, Pair18, Pair873 and Trio48**). All are from MIA/NIA-LOAD. We verified that these five groups include replicates of [five family members]{.underline}.
 
-    -   **Cluster 2** includes three Pairs (**Pair342, Pair553, Pair563**). All are from ADC-Mayo/NIA-LOAD. Among the different pairs pi_hat \\(\\approx\\) 0.62, [consistent with being family members]{.underline}.
+    -   **Cluster 2** includes three Pairs (**Pair342, Pair553, Pair563**). All are from ADC-Mayo/NIA-LOAD. Among the different pairs pi_hat \\(\\approx\\) 0.62. We verified that the three groups include replicates of [three family members.]{.underline}
 
-    -   **Cluster 3** includes one Trio and two Pairs (**Trio33, Pair566 and Pair629**). All are from ADC-UPitt/A4/ADNI. Pair566 and Trio33 have pi_hat \\(\\approx\\) 0.57 between the groups, while Pair629 has a pi-hat \\(\\approx\\) 0.40 between Trio33 and Pair566. [All are consistent with being family members]{.underline}.
+    -   **Cluster 3** includes one Trio and two Pairs (**Trio33, Pair566 and Pair629**). All are from ADC-UPitt/A4/ADNI. Pair566 and Trio33 have pi_hat \\(\\approx\\) 0.57 between the groups, while Pair629 has a pi-hat \\(\\approx\\) 0.40 between Trio33 and Pair566. [All are consistent with being family members, but we do not have access to family numbers to verify]{.underline}.
 
     -   **Cluster 4** includes five Trios and one Pair (Trio4, Trio5, Trio54, Trio100, Trio109 and Pair524). Two of the trios were in the 36k PCA replicate analysis and we speculated that they may be Askenazi Jewish. No groups have pi-hat \>0.5 between them.
 
@@ -799,7 +811,7 @@ print_points(plot_data, "PC4", "PC5", x_range = c(-0.095, -0.05), y_range = c(0,
 
     -   **Cluster 1**, **Cluster 2** and **Cluster 3** are the same respective family clusters defined for PC4 vs. PC5.
 
-    -   **Cluster 6** is a new cluster including three quads (**Quad3, Quad6 and Quad8**). All are from ADC/EFIGA/WHICAP). It appears they all have pi-hat\<0.4 between them, but they [could be extended family members]{.underline}.
+    -   **Cluster 6** is a new cluster including three quads (**Quad3, Quad6 and Quad8**). All are from ADC/EFIGA/WHICAP). They all have pi-hat\<0.4 between them and members of Quad3 and Quad8 have different family numbers in EFIGA. They are unlikely to be close relatives but they [could be extended family members]{.underline}.
 
     -   **Quad4** is separated individually.
 
@@ -836,9 +848,9 @@ for (i in 4:5) {
 
     -   **Cluster 7** includes **Quad6** (also from Cluster 6 above) and **Trio62**, both from ADC/WHICAP. Like Cluster 6, the pi-hat\<0.4 between them, but they [could be extended family members]{.underline}.
 
-    -   **Cluster 8** includes **Pair167** and **Trio21**. The pi-hat between the two is 0.525, [consistent with being family members]{.underline}.
+    -   **Cluster 8** includes **Pair167** and **Trio21**. The pi-hat between the two is 0.525 and we were able to verify that replicates in these groups represent [two family members]{.underline}.
 
-    -   **Cluster 9** includes **Pair743** and **Trio99**. The pi-hat between the two is 0.534, [consistent with being family members]{.underline}.
+    -   **Cluster 9** includes **Pair743** and **Trio99**. The pi-hat between the two is 0.534 and we were able to verify that replicates in these groups represent [two family members]{.underline}.
 
 ```{r pc_plots_89, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
 # Define clusters
@@ -936,11 +948,11 @@ for (i in c(1, 4)) {
 
     -   **Cluster 10** consists of **Trio25** and **Pair562**. The pi-hat between the two groups is 0.586, [consistent with them being related]{.underline}.
 
-    -   **Cluster 11** consists of **Pair872** and **Pair86**. The pi-hat between the two groups is 0.527, [consistent with them being related]{.underline}.
+    -   **Cluster 11** consists of **Pair872** and **Pair86**. The pi-hat between the two groups is 0.527 and we were able to verify that replicates in these groups represent [two family members]{.underline}.
 
     -   **Cluster 12** consists of **Pair283, Pair277** and **Pair329**. The pi-hat between **Pair283** and **Pair277** is 0.46, while the pi-hat between **Pair283** and **Pair329** is 0.534, [consistent with them being related]{.underline}. Interestingly it appears that pi-hat between **Pair277** and **Pair329** is \<0.4.
 
--   Notice that **Quad1**, is the first replicate set that we have seen split out that does not have identical loadings for all replicates. We saw this reflected in section C.3, where the SD for **Quad1** increases for PC15. NOte that the deviating sample is from r1 (see Table below).
+-   Notice that **Quad1**, is the first replicate set that we have seen split out that does not have identical loadings for all replicates. We saw this reflected in section C.3, where the SD for **Quad1** increases for PC15. Note that the deviating sample is from r1 (see Table below).
 
 -   After PC19, we start to see Trios split out individually and no clustering outliers.
 
@@ -1094,10 +1106,12 @@ for (i in seq(1,4)) {
 
 -   **Variance Explained**: The first 3 PCs explain the majority of variance and primarily capture race and ethnicity differences among samples. Variance drops rapidly after PC3, with individual PCs explaining progressively smaller amounts.
 
--   **Technical Replication Quality**: Within-group standard deviations remain near zero through PC1012, indicating excellent technical replication. Replicate splits begin at PC1013 (matching the expected threshold of Groups - 1), with modest variation appearing between PC1013-PC1101, then decreasing sharply.
+-   **Technical Replication Quality**: Within-group standard deviations remain near zero through PC1012, indicating excellent technical replication. Replicate splits begin at PC1013 (matching the expected threshold of Groups - 1), with modest variation appearing between PC1013-PC1102, then decreasing sharply.
 
 -   **Population Structure**: PC1 and PC2 separate samples by race and ethnicity, with PC1 distinguishing Asian ancestry and PC2 showing a gradient from Black to White populations. PC3 further separates Native American ancestry.
 
 -   **Family Structure**: PCs 4-25 reveal multiple family clusters and related individuals, with higher PCs progressively resolving finer levels of relatedness. All quads separate individually by PC14, followed by trios and eventually pairs in higher PCs.
+
+-   **Low Within-Group Variation**: Only 95 of the 1013 Groups (~9%) have any within-group SD > 0, implying that the vast majority of replicate groups show no detectable genetic variation among the variants used in PCA.
 
 -   **Quality Control**: The pattern of replicate splits is consistent with low technical variation and high-quality sequencing across rounds. Identified clusters include potential family units and populations with specific ancestry patterns (e.g., possible Ashkenazi Jewish ancestry in Cluster 4).

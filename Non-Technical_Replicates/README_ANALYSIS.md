@@ -6,7 +6,7 @@ This analysis examines PCA results from non-technical replicates in ADSP R5 to e
 
 ## Files
 
-- **ADSP_R5_Non-tech2.Rmd** - Main analysis script
+- **ADSP_R5_Non_Tech_Replicates.Rmd** - Main analysis script
 - **data/Non-TECH_pruned_evec.csv** - PCA eigenvectors (with eigenvalues in first row)
 - **data/r5_replicate_covariates.csv** - Sample covariate information
 - **processed_pca_data.csv** - Processed PCA data (auto-generated)
@@ -16,16 +16,16 @@ This analysis examines PCA results from non-technical replicates in ADSP R5 to e
 
 ### Option 1: RStudio
 1. Open `Non-Technical_Replicates.Rproj` in RStudio
-2. Open `ADSP_R5_Non-tech2.Rmd`
+2. Open `ADSP_R5_Non_Tech_Replicates.Rmd`
 3. Click "Knit" button to generate HTML report
 
 ### Option 2: Command Line
 ```bash
 # Generate HTML report
-Rscript -e "rmarkdown::render('ADSP_R5_Non-tech2.Rmd')"
+Rscript -e "rmarkdown::render('ADSP_R5_Non_Tech_Replicates.Rmd')"
 
 # Or generate markdown only
-Rscript -e "knitr::knit('ADSP_R5_Non-tech2.Rmd')"
+Rscript -e "knitr::knit('ADSP_R5_Non_Tech_Replicates.Rmd')"
 ```
 
 ## Expected Input Format
