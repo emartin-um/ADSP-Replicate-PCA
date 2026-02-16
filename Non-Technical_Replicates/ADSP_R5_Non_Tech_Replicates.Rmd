@@ -750,13 +750,13 @@ plot_pcs(plot_data, "PC2", "PC3", color_by = "Race", shape_by = "Ethnicity",
 
     -   **Cluster 1** includes one Trio and four Pairs (**Pair16, Pair17, Pair18, Pair873 and Trio48**). All are from MIA/NIA-LOAD. We verified that these five groups include replicates of [five family members]{.underline}.
 
-    -   **Cluster 2** includes three Pairs (**Pair342, Pair553, Pair563**). All are from ADC-Mayo/NIA-LOAD. Among the different pairs pi_hat \\(\\approx\\) 0.62. We verified that the three groups include replicates of [three family members.]{.underline}
+    -   **Cluster 2** includes three Pairs (**Pair342, Pair553, Pair563**). All are from ADC/NIA-LOAD. Among the different pairs pi_hat \\(\\approx\\) 0.62. We verified that the three groups include replicates of [three family members.]{.underline}
 
-    -   **Cluster 3** includes one Trio and two Pairs (**Trio33, Pair566 and Pair629**). All are from ADC-UPitt/A4/ADNI. Pair566 and Trio33 have pi_hat \\(\\approx\\) 0.57 between the groups, while Pair629 has a pi-hat \\(\\approx\\) 0.40 between Trio33 and Pair566. [All are consistent with being family members, but we do not have access to family numbers to verify]{.underline}.
+    -   **Cluster 3** includes one Trio and two Pairs (**Trio33, Pair566 and Pair629**). All are from ADC/A4/ADNI. Pair566 and Trio33 have pi_hat \\(\\approx\\) 0.57 between the groups, while Pair629 has a pi-hat \\(\\approx\\) 0.40 between Trio33 and Pair566. [All are consistent with being family members, but we do not have access to family numbers to verify]{.underline}.
 
     -   **Cluster 4** includes five Trios and one Pair (Trio4, Trio5, Trio54, Trio100, Trio109 and Pair524). Two of the trios were in the 36k PCA replicate analysis and we speculated that they may be Askenazi Jewish. No groups have pi-hat \>0.5 between them.
 
-    -   **Cluster 5** includes 38 Pairs. Almost half are from KGAD/ADC-WashU. See the table below. No groups have pi-hat \>0.4 between them.
+    -   **Cluster 5** includes 38 Pairs. Almost half are from KGAD/ADC. See the table below. No groups have pi-hat \>0.4 between them.
 
 ```{r pc_plots_45, message=FALSE, warning=FALSE, echo=TRUE, results='asis'}
 plot_pcs(plot_data, "PC4", "PC5", color_by = "Race", shape_by = "Ethnicity", 
